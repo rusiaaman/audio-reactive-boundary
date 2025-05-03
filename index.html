@@ -1,0 +1,309 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Viscous Smoke Mixing</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+            background-color: #222;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            font-family: Arial, sans-serif;
+        }
+        
+        #container {
+            width: 800px;
+            height: 600px;
+            background-color: #111;
+            border: 4px solid #444;
+            border-radius: 8px;
+            position: relative;
+            overflow: hidden;
+        }
+        
+        canvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+        }
+    </style>
+</head>
+<body>
+    <div id="container">
+        <canvas id="smokeCanvas"></canvas>
+    </div>
+    
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            const canvas = document.getElementById('smokeCanvas');
+            const ctx = canvas.getContext('2d');
+            
+            // Set canvas size to match container
+            canvas.width = 800;
+            canvas.height = 600;
+            
+            // Smoke particles
+            const particles = [];
+            const particleCount = 250; // Increased for more dense smoke
+            
+            // Colors for the two smokes
+            const color1 = [76, 175, 240]; // Blue
+            const color2 = [242, 88, 53];  // Red-orange
+            
+            // Animation timing
+            let lastTime = 0;
+            const fps = 60;
+            const interval = 1000 / fps;
+            
+            // Wind simulation variables - faster change rate for more dynamic movement
+            let windTime = 0;
+            const windChangeRate = 0.005;
+            
+            // Particle class
+            class SmokeParticle {
+                constructor(isFirstColor) {
+                    this.reset(isFirstColor);
+                }
+                
+                reset(isFirstColor) {
+                    // More dramatically separated initial positions
+                    if (isFirstColor) {
+                        // Left side particles
+                        this.x = 150 + Math.random() * 100;
+                    } else {
+                        // Right side particles
+                        this.x = 550 + Math.random() * 100;
+                    }
+                    
+                    // Position vertically in the middle area
+                    this.y = 250 + Math.random() * 100;
+                    
+                    // Size and shape
+                    this.radius = 30 + Math.random() * 40; // Slightly smaller for faster movement perception
+                    this.isFirstColor = isFirstColor;
+                    
+                    // Initial velocities - stronger initial horizontal component
+                    const initialDirection = isFirstColor ? 1 : -1; // Different initial directions based on color
+                    this.vx = initialDirection * (0.5 + Math.random() * 0.5); // Stronger initial horizontal movement
+                    this.vy = (Math.random() - 0.5) * 0.3; // Less vertical movement initially
+                    
+                    // Appearance
+                    this.opacity = 0;
+                    this.maxOpacity = 0.2 + Math.random() * 0.3;
+                    this.growing = true;
+                    
+                    // Choose color
+                    const baseColor = isFirstColor ? color1 : color2;
+                    this.color = [...baseColor];
+                    
+                    // Life tracking
+                    this.life = 0;
+                    this.maxLife = 300 + Math.random() * 300;
+                }
+                
+                update() {
+                    this.life++;
+                    
+                    // Handle opacity
+                    if (this.growing) {
+                        this.opacity += 0.005;
+                        if (this.opacity >= this.maxOpacity) {
+                            this.opacity = this.maxOpacity;
+                            this.growing = false;
+                        }
+                    } else if (this.life > this.maxLife * 0.7) {
+                        this.opacity -= 0.002;
+                    }
+                    
+                    // Movement
+                    // Much stronger wind effect for more noticeable horizontal movement
+                    const windStrength = 0.3; // Significantly increased
+                    const windDirection = Math.sin(windTime + this.x * 0.01) * windStrength;
+                    const verticalWind = Math.cos(windTime * 0.7 + this.y * 0.008) * windStrength * 0.3;
+                    
+                    // Add some drift based on position to create mixing
+                    const centerInfluence = 0.001;
+                    const centerX = canvas.width / 2;
+                    
+                    // Lighter pull toward center to allow more horizontal freedom
+                    this.vx += (centerX - this.x) * (centerInfluence * 0.5);
+                    
+                    // Apply wind effect - stronger horizontal component
+                    this.vx += windDirection;
+                    
+                    // Add a base horizontal drift in addition to the oscillating wind
+                    this.vx += Math.sin(windTime * 0.5) * 0.1;
+                    
+                    // Reduced vertical component to emphasize horizontal movement
+                    this.vy += verticalWind + (Math.random() - 0.5) * 0.02;
+                    
+                    // Reduce viscosity for horizontal movement to maintain momentum
+                    this.vx *= 0.99; // Less dampening for horizontal motion
+                    this.vy *= 0.97; // More dampening for vertical motion to emphasize horizontal flow
+                    
+                    // Apply velocity
+                    this.x += this.vx;
+                    this.y += this.vy;
+                    
+                    // Slow expansion of smoke radius - varies based on wind intensity
+                    const expansionRate = 0.15 + Math.abs(windDirection) * 0.3;
+                    this.radius += expansionRate;
+                    
+                    // Handle collisions with other particles (viscous mixing)
+                    for (let other of particles) {
+                        if (other !== this) {
+                            const dx = other.x - this.x;
+                            const dy = other.y - this.y;
+                            const distance = Math.sqrt(dx * dx + dy * dy);
+                            const minDist = this.radius + other.radius;
+                            
+                            // If particles are close enough to interact
+                            if (distance < minDist * 0.7) {
+                                // Color mixing when particles of different colors meet
+                                if (this.isFirstColor !== other.isFirstColor) {
+                                    // Blend colors gradually
+                                    for (let i = 0; i < 3; i++) {
+                                        this.color[i] = this.color[i] * 0.99 + 
+                                                      (this.isFirstColor ? color2[i] : color1[i]) * 0.01;
+                                    }
+                                }
+                                
+                                // Repulsion (viscous push)
+                                const repulsion = 0.02;
+                                const nx = dx / distance;
+                                const ny = dy / distance;
+                                this.vx -= nx * repulsion;
+                                this.vy -= ny * repulsion;
+                            }
+                        }
+                    }
+                    
+                    // Reset when faded or off-screen
+                    if (this.opacity <= 0 || this.life >= this.maxLife || 
+                        this.y < -this.radius || this.y > canvas.height + this.radius ||
+                        this.x < -this.radius || this.x > canvas.width + this.radius) {
+                        this.reset(this.isFirstColor);
+                    }
+                }
+                
+                draw() {
+                    if (this.opacity <= 0) return;
+                    
+                    // Create gradient for smooth edges
+                    const gradient = ctx.createRadialGradient(
+                        this.x, this.y, 0,
+                        this.x, this.y, this.radius
+                    );
+                    
+                    const [r, g, b] = this.color;
+                    gradient.addColorStop(0, `rgba(${r}, ${g}, ${b}, ${this.opacity})`);
+                    gradient.addColorStop(0.7, `rgba(${r}, ${g}, ${b}, ${this.opacity * 0.5})`);
+                    gradient.addColorStop(1, `rgba(${r}, ${g}, ${b}, 0)`);
+                    
+                    ctx.fillStyle = gradient;
+                    ctx.beginPath();
+                    ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+            }
+            
+            // Initialize particles
+            function init() {
+                for (let i = 0; i < particleCount; i++) {
+                    // Alternate colors
+                    particles.push(new SmokeParticle(i % 2 === 0));
+                }
+            }
+            
+            // Animation loop
+            function animate(currentTime) {
+                requestAnimationFrame(animate);
+                
+                // Control frame rate
+                const elapsed = currentTime - lastTime;
+                if (elapsed < interval) return;
+                lastTime = currentTime - (elapsed % interval);
+                
+                // Update wind time - creates smooth changes in wind
+                windTime += windChangeRate;
+                
+                // Partially clear canvas for smoke trails - less clearing for more persistence
+                ctx.fillStyle = 'rgba(17, 17, 17, 0.03)'; // More persistence
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+                
+                // Draw wind indicator arrow
+                const windIndicatorX = 50;
+                const windIndicatorY = 50;
+                const globalWindDirection = Math.sin(windTime) * 20; // Current wind direction
+                
+                // Draw arrow
+                ctx.save();
+                ctx.fillStyle = 'rgba(255, 255, 255, 0.6)';
+                ctx.strokeStyle = 'rgba(255, 255, 255, 0.8)';
+                ctx.lineWidth = 2;
+                
+                // Arrow line
+                ctx.beginPath();
+                ctx.moveTo(windIndicatorX - globalWindDirection, windIndicatorY);
+                ctx.lineTo(windIndicatorX + globalWindDirection, windIndicatorY);
+                ctx.stroke();
+                
+                // Arrow head
+                const headSize = 6;
+                if (globalWindDirection > 0) { // Pointing right
+                    ctx.beginPath();
+                    ctx.moveTo(windIndicatorX + globalWindDirection + headSize, windIndicatorY);
+                    ctx.lineTo(windIndicatorX + globalWindDirection, windIndicatorY - headSize);
+                    ctx.lineTo(windIndicatorX + globalWindDirection, windIndicatorY + headSize);
+                    ctx.fill();
+                } else { // Pointing left
+                    ctx.beginPath();
+                    ctx.moveTo(windIndicatorX - globalWindDirection - headSize, windIndicatorY);
+                    ctx.lineTo(windIndicatorX - globalWindDirection, windIndicatorY - headSize);
+                    ctx.lineTo(windIndicatorX - globalWindDirection, windIndicatorY + headSize);
+                    ctx.fill();
+                }
+                ctx.restore();
+                
+                // Update and draw particles
+                particles.forEach(particle => {
+                    particle.update();
+                    particle.draw();
+                });
+            }
+            
+            // Start animation
+            init();
+            animate(0);
+            
+            // Add click event to create disturbance in the smoke
+            canvas.addEventListener('click', function(e) {
+                const rect = canvas.getBoundingClientRect();
+                const x = e.clientX - rect.left;
+                const y = e.clientY - rect.top;
+                
+                // Create a force push from click point
+                particles.forEach(particle => {
+                    const dx = particle.x - x;
+                    const dy = particle.y - y;
+                    const distance = Math.sqrt(dx * dx + dy * dy);
+                    const maxDistance = 200;
+                    
+                    if (distance < maxDistance) {
+                        const force = 2 * (1 - distance / maxDistance);
+                        const angle = Math.atan2(dy, dx);
+                        particle.vx += Math.cos(angle) * force;
+                        particle.vy += Math.sin(angle) * force;
+                    }
+                });
+            });
+        });
+    </script>
+</body>
+</html>
