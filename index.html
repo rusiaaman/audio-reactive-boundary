@@ -50,7 +50,147 @@
             window.addEventListener('resize', function() {
                 canvas.width = window.innerWidth;
                 canvas.height = window.innerHeight;
+                // Update container path when window is resized
+                containerPath = generateContainerPath();
             });
+            
+            // Container configuration
+            const containerConfig = {
+                shape: 'roundedRect', // Options: 'roundedRect', 'circle', 'ellipse', 'polygon', 'wave', 'custom'
+                animationTime: 0,
+                animationSpeed: 0.001,
+                padding: 50,
+                customPathFunction: null // Function that returns a Path2D object
+            };
+            
+            // Example of a custom path function - can be replaced with any function that returns a Path2D
+            function starShape() {
+                const path = new Path2D();
+                const centerX = canvas.width / 2;
+                const centerY = canvas.height / 2;
+                const outerRadius = Math.min(canvas.width, canvas.height) / 2.5;
+                const innerRadius = outerRadius / 2;
+                const spikes = 8;
+                
+                for (let i = 0; i < spikes * 2; i++) {
+                    const radius = i % 2 === 0 ? outerRadius : innerRadius;
+                    const angle = (i * Math.PI) / spikes;
+                    const x = centerX + Math.cos(angle) * radius;
+                    const y = centerY + Math.sin(angle) * radius;
+                    
+                    if (i === 0) {
+                        path.moveTo(x, y);
+                    } else {
+                        path.lineTo(x, y);
+                    }
+                }
+                
+                path.closePath();
+                return path;
+            }
+            
+            // Function to generate the container boundary path
+            function generateContainerPath() {
+                // This function returns a path that defines the container boundary
+                // based on the current containerConfig settings
+                
+                // If a custom path function is set, use it
+                if (containerConfig.shape === 'custom' && typeof containerConfig.customPathFunction === 'function') {
+                    return containerConfig.customPathFunction();
+                }
+                
+                // Create a new path
+                const path = new Path2D();
+                
+                // Update animation time
+                containerConfig.animationTime += containerConfig.animationSpeed;
+                
+                // Get dimensions based on canvas size and padding
+                const padding = containerConfig.padding;
+                const width = canvas.width - (padding * 2);
+                const height = canvas.height - (padding * 2);
+                const centerX = canvas.width / 2;
+                const centerY = canvas.height / 2;
+                
+                switch (containerConfig.shape) {
+                    case 'circle':
+                        // Create circular container
+                        const radius = Math.min(width, height) / 2;
+                        path.arc(centerX, centerY, radius, 0, Math.PI * 2);
+                        break;
+                    
+                    case 'ellipse':
+                        // Create elliptical container
+                        path.ellipse(centerX, centerY, width / 2, height / 2, 0, 0, Math.PI * 2);
+                        break;
+                    
+                    case 'polygon':
+                        // Create polygon container (hexagon)
+                        const sides = 6;
+                        const polyRadius = Math.min(width, height) / 2;
+                        path.moveTo(centerX + polyRadius, centerY);
+                        
+                        for (let i = 1; i <= sides; i++) {
+                            const angle = (i * 2 * Math.PI / sides);
+                            path.lineTo(
+                                centerX + polyRadius * Math.cos(angle),
+                                centerY + polyRadius * Math.sin(angle)
+                            );
+                        }
+                        break;
+                    
+                    case 'wave':
+                        // Create a wavy container that changes over time
+                        const wavePoints = 12;
+                        const baseRadius = Math.min(width, height) / 2;
+                        path.beginPath();
+                        
+                        for (let i = 0; i <= wavePoints; i++) {
+                            const angle = (i * 2 * Math.PI / wavePoints);
+                            const waveAmount = 50 * Math.sin(containerConfig.animationTime * 3 + i * 0.5);
+                            const waveRadius = baseRadius + waveAmount;
+                            
+                            const x = centerX + waveRadius * Math.cos(angle);
+                            const y = centerY + waveRadius * Math.sin(angle);
+                            
+                            if (i === 0) {
+                                path.moveTo(x, y);
+                            } else {
+                                path.lineTo(x, y);
+                            }
+                        }
+                        
+                        break;
+                    
+                    case 'roundedRect':
+                    default:
+                        // Create a rounded rectangle as the container
+                        const cornerRadius = 100; // Corner radius
+                        
+                        // Draw the rounded rectangle path
+                        path.moveTo(padding + cornerRadius, padding);
+                        path.lineTo(padding + width - cornerRadius, padding);
+                        path.arcTo(padding + width, padding, padding + width, padding + cornerRadius, cornerRadius);
+                        path.lineTo(padding + width, padding + height - cornerRadius);
+                        path.arcTo(padding + width, padding + height, padding + width - cornerRadius, padding + height, cornerRadius);
+                        path.lineTo(padding + cornerRadius, padding + height);
+                        path.arcTo(padding, padding + height, padding, padding + height - cornerRadius, cornerRadius);
+                        path.lineTo(padding, padding + cornerRadius);
+                        path.arcTo(padding, padding, padding + cornerRadius, padding, cornerRadius);
+                        break;
+                }
+                
+                path.closePath();
+                return path;
+            }
+            
+            // Function to check if a point is inside the container path
+            function isPointInContainer(x, y, path) {
+                return ctx.isPointInPath(path, x, y);
+            }
+            
+            // Generate the initial container path
+            let containerPath = generateContainerPath();
             
             // Smoke particles - increased density for fuller coverage with slower particles
             const particles = [];
@@ -222,32 +362,81 @@
                         }
                     }
                     
-                    // Reset when faded or off-screen
-                    // Bounce off edges instead of resetting to maintain better screen coverage
+                    // Reset when faded or at end of life
                     if (this.opacity <= 0 || this.life >= this.maxLife) {
                         this.reset(this.colorIndex);
-                    } else {
-                        // Bounce off edges with slight damping
-                        if (this.x < this.radius) {
-                            this.x = this.radius;
-                            this.vx = Math.abs(this.vx) * 0.8; // Reverse direction and dampen
-                        } else if (this.x > canvas.width - this.radius) {
-                            this.x = canvas.width - this.radius;
-                            this.vx = -Math.abs(this.vx) * 0.8; // Reverse direction and dampen
+                        // Ensure new particle starts inside the container
+                        while (!isPointInContainer(this.x, this.y, containerPath)) {
+                            this.x = Math.random() * canvas.width;
+                            this.y = Math.random() * canvas.height;
                         }
+                    } else {
+                        // Calculate next position
+                        const nextX = this.x + this.vx;
+                        const nextY = this.y + this.vy;
                         
-                        if (this.y < this.radius) {
-                            this.y = this.radius;
-                            this.vy = Math.abs(this.vy) * 0.8; // Reverse direction and dampen
-                        } else if (this.y > canvas.height - this.radius) {
-                            this.y = canvas.height - this.radius;
-                            this.vy = -Math.abs(this.vy) * 0.8; // Reverse direction and dampen
+                        // Check if next position is within container
+                        if (!isPointInContainer(nextX, nextY, containerPath)) {
+                            // Handle collision with container boundary
+                            // This is a simple reflection model; can be made more sophisticated
+                            
+                            // Sample points around the particle to estimate the normal of the boundary
+                            const samples = 8;
+                            let normalX = 0;
+                            let normalY = 0;
+                            
+                            for (let i = 0; i < samples; i++) {
+                                const angle = (i / samples) * Math.PI * 2;
+                                const sampleX = this.x + Math.cos(angle) * (this.radius * 1.2);
+                                const sampleY = this.y + Math.sin(angle) * (this.radius * 1.2);
+                                
+                                if (!isPointInContainer(sampleX, sampleY, containerPath)) {
+                                    normalX += this.x - sampleX;
+                                    normalY += this.y - sampleY;
+                                }
+                            }
+                            
+                            // Normalize the normal vector
+                            const normalLength = Math.sqrt(normalX * normalX + normalY * normalY);
+                            if (normalLength > 0) {
+                                normalX /= normalLength;
+                                normalY /= normalLength;
+                                
+                                // Reflect velocity vector using the normal
+                                const dot = 2 * (this.vx * normalX + this.vy * normalY);
+                                this.vx -= dot * normalX;
+                                this.vy -= dot * normalY;
+                                
+                                // Apply damping
+                                this.vx *= 0.8;
+                                this.vy *= 0.8;
+                                
+                                // Move particle slightly inward to ensure it stays in bounds
+                                const buffer = 2;
+                                this.x += normalX * buffer;
+                                this.y += normalY * buffer;
+                            } else {
+                                // Fallback if normal estimation fails: bounce in random direction
+                                const randomAngle = Math.random() * Math.PI * 2;
+                                this.vx = Math.cos(randomAngle) * Math.sqrt(this.vx * this.vx + this.vy * this.vy) * 0.8;
+                                this.vy = Math.sin(randomAngle) * Math.sqrt(this.vx * this.vx + this.vy * this.vy) * 0.8;
+                            }
+                        } else {
+                            // Apply velocity if inside container
+                            this.x = nextX;
+                            this.y = nextY;
                         }
                     }
                 }
                 
                 draw() {
                     if (this.opacity <= 0) return;
+                    
+                    // Save current context state
+                    ctx.save();
+                    
+                    // Clip to container path so smoke isn't rendered outside the boundary
+                    ctx.clip(containerPath);
                     
                     // Create gradient for smooth edges
                     const gradient = ctx.createRadialGradient(
@@ -264,6 +453,9 @@
                     ctx.beginPath();
                     ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
                     ctx.fill();
+                    
+                    // Restore context state
+                    ctx.restore();
                 }
             }
             
@@ -271,7 +463,15 @@
             function init() {
                 for (let i = 0; i < particleCount; i++) {
                     // Create particles of all four colors, evenly distributed
-                    particles.push(new SmokeParticle(i % 4));
+                    const particle = new SmokeParticle(i % 4);
+                    
+                    // Ensure particles start inside the container
+                    while (!isPointInContainer(particle.x, particle.y, containerPath)) {
+                        particle.x = Math.random() * canvas.width;
+                        particle.y = Math.random() * canvas.height;
+                    }
+                    
+                    particles.push(particle);
                 }
             }
             
@@ -291,7 +491,26 @@
                 ctx.fillStyle = 'rgba(17, 17, 17, 0.01)'; // Less clearing for more density
                 ctx.fillRect(0, 0, canvas.width, canvas.height);
                 
-                // Remove wind indicator since movement is now primarily random
+                // Draw container boundary
+                ctx.strokeStyle = 'rgba(100, 100, 100, 0.3)';
+                ctx.lineWidth = 2;
+                ctx.stroke(containerPath);
+                
+                // Draw control points overlay
+                drawControlPoints();
+                
+                // Highlight nearest segment for adding points when Alt is pressed
+                if (showControlPoints && nearestSegmentIndex >= 0) {
+                    const p1 = controlPoints[nearestSegmentIndex];
+                    const p2 = controlPoints[(nearestSegmentIndex + 1) % controlPoints.length];
+                    
+                    ctx.strokeStyle = 'rgba(255, 255, 100, 0.8)';
+                    ctx.lineWidth = 3;
+                    ctx.beginPath();
+                    ctx.moveTo(p1.x, p1.y);
+                    ctx.lineTo(p2.x, p2.y);
+                    ctx.stroke();
+                }
                 
                 // Update and draw particles
                 particles.forEach(particle => {
@@ -300,31 +519,580 @@
                 });
             }
             
+            // Create a public API for controlling the smoke container
+            window.smokeContainer = {
+                // Get the current control points
+                getControlPoints: function() {
+                    return JSON.parse(JSON.stringify(controlPoints)); // Return a deep copy
+                },
+                
+                // Set control points programmatically
+                setControlPoints: function(points) {
+                    if (Array.isArray(points) && points.length >= 3) {
+                        controlPoints.length = 0; // Clear existing points
+                        
+                        // Add each point
+                        points.forEach(point => {
+                            if (typeof point.x === 'number' && typeof point.y === 'number') {
+                                controlPoints.push({
+                                    x: point.x,
+                                    y: point.y,
+                                    isDragging: false
+                                });
+                            }
+                        });
+                        
+                        containerPath = generatePathFromControlPoints();
+                        return true;
+                    }
+                    return false;
+                },
+                
+                // Add a control point at specific index
+                addControlPoint: function(x, y, index = -1) {
+                    const newPoint = { x, y, isDragging: false };
+                    
+                    if (index >= 0 && index <= controlPoints.length) {
+                        controlPoints.splice(index, 0, newPoint);
+                    } else {
+                        controlPoints.push(newPoint);
+                    }
+                    
+                    containerPath = generatePathFromControlPoints();
+                    return controlPoints.length - 1; // Return index of the new point
+                },
+                
+                // Remove a control point
+                removeControlPoint: function(index) {
+                    if (index >= 0 && index < controlPoints.length && controlPoints.length > 3) {
+                        controlPoints.splice(index, 1);
+                        containerPath = generatePathFromControlPoints();
+                        return true;
+                    }
+                    return false;
+                },
+                
+                // Reset to default circular shape
+                resetToCircle: function(numPoints = 8) {
+                    controlPoints.length = 0;
+                    
+                    for (let i = 0; i < numPoints; i++) {
+                        const angle = (i / numPoints) * Math.PI * 2;
+                        const radius = Math.min(canvas.width, canvas.height) / 3;
+                        const x = canvas.width / 2 + Math.cos(angle) * radius;
+                        const y = canvas.height / 2 + Math.sin(angle) * radius;
+                        controlPoints.push({ x, y, isDragging: false });
+                    }
+                    
+                    containerPath = generatePathFromControlPoints();
+                    return true;
+                },
+                
+                // Set a custom path directly using Path2D
+                setCustomPath: function(path) {
+                    if (path instanceof Path2D) {
+                        containerPath = path;
+                        return true;
+                    }
+                    return false;
+                },
+                
+                // Get the current container path
+                getContainerPath: function() {
+                    return containerPath;
+                },
+                
+                // Check if a point is inside the container
+                isPointInContainer: function(x, y) {
+                    return isPointInContainer(x, y, containerPath);
+                },
+                
+                // Show or hide control points
+                showControlPoints: function(show = true) {
+                    showControlPoints = show;
+                }
+            };
+            
             // Start animation
             init();
             animate(0);
             
-            // Add click event to create disturbance in the smoke
-            canvas.addEventListener('click', function(e) {
-                const rect = canvas.getBoundingClientRect();
-                const x = e.clientX - rect.left;
-                const y = e.clientY - rect.top;
+            // Define control points for the boundary
+            const controlPoints = [];
+            const numInitialPoints = 8;
+            
+            // Init control points in a circle
+            for (let i = 0; i < numInitialPoints; i++) {
+                const angle = (i / numInitialPoints) * Math.PI * 2;
+                const radius = Math.min(canvas.width, canvas.height) / 3;
+                const x = canvas.width / 2 + Math.cos(angle) * radius;
+                const y = canvas.height / 2 + Math.sin(angle) * radius;
+                controlPoints.push({ x, y, isDragging: false });
+            }
+            
+            // Container path configuration
+            const pathConfig = {
+                curveType: 'catmull-rom', // Options: 'bezier', 'catmull-rom', 'cardinal'
+                segments: 10 // Number of segments for Catmull-Rom
+            };
+            
+            // Function to generate container path from control points
+            function generatePathFromControlPoints() {
+                const path = new Path2D();
                 
-                // Create a force push from click point
-                particles.forEach(particle => {
-                    const dx = particle.x - x;
-                    const dy = particle.y - y;
-                    const distance = Math.sqrt(dx * dx + dy * dy);
-                    const maxDistance = 200;
+                if (controlPoints.length < 3) return path;
+                
+                // Get current curve type from config
+                const curveType = pathConfig.curveType;
+                
+                switch (curveType) {
+                    case 'bezier':
+                        // Simple cubic Bezier curves
+                        path.moveTo(controlPoints[0].x, controlPoints[0].y);
+                        
+                        // Create a smooth curve through the points
+                        for (let i = 0; i < controlPoints.length; i++) {
+                            const current = controlPoints[i];
+                            const next = controlPoints[(i + 1) % controlPoints.length];
+                            const prev = controlPoints[(i - 1 + controlPoints.length) % controlPoints.length];
+                            
+                            // Calculate control points for curve
+                            const tension = 0.2; // How smooth the curve is (0-1)
+                            
+                            // Control point before current point
+                            const cp1x = current.x - (next.x - prev.x) * tension;
+                            const cp1y = current.y - (next.y - prev.y) * tension;
+                            
+                            // Control point after current point
+                            const cp2x = next.x - (controlPoints[(i + 2) % controlPoints.length].x - current.x) * tension;
+                            const cp2y = next.y - (controlPoints[(i + 2) % controlPoints.length].y - current.y) * tension;
+                            
+                            // Draw the bezier curve to the next point
+                            path.bezierCurveTo(cp1x, cp1y, cp2x, cp2y, next.x, next.y);
+                        }
+                        break;
+                        
+                    case 'cardinal':
+                        // Cardinal spline (smoother than Bezier)
+                        path.moveTo(controlPoints[0].x, controlPoints[0].y);
+                        
+                        const cardinalTension = 0.5; // 0 = linear, 1 = very curvy
+                        
+                        for (let i = 0; i < controlPoints.length; i++) {
+                            const p0 = controlPoints[(i - 1 + controlPoints.length) % controlPoints.length];
+                            const p1 = controlPoints[i];
+                            const p2 = controlPoints[(i + 1) % controlPoints.length];
+                            const p3 = controlPoints[(i + 2) % controlPoints.length];
+                            
+                            // Calculate cardinal spline control points
+                            const t = cardinalTension;
+                            const s = (1 - t) / 2;
+                            
+                            const cp1x = p1.x + s * (p2.x - p0.x);
+                            const cp1y = p1.y + s * (p2.y - p0.y);
+                            const cp2x = p2.x - s * (p3.x - p1.x);
+                            const cp2y = p2.y - s * (p3.y - p1.y);
+                            
+                            path.bezierCurveTo(cp1x, cp1y, cp2x, cp2y, p2.x, p2.y);
+                        }
+                        break;
+                        
+                    case 'catmull-rom':
+                    default:
+                        // Catmull-Rom spline (passes through all points)
+                        const points = [...controlPoints];
+                        const segments = 10; // Number of segments between each pair of points
+                        
+                        // Generate points along the spline
+                        const curvePoints = [];
+                        
+                        for (let i = 0; i < points.length; i++) {
+                            const p0 = points[(i - 1 + points.length) % points.length];
+                            const p1 = points[i];
+                            const p2 = points[(i + 1) % points.length];
+                            const p3 = points[(i + 2) % points.length];
+                            
+                            // Add segments for the current point pair (p1 to p2)
+                            for (let t = 0; t < (i === points.length - 1 ? segments + 1 : segments); t++) {
+                                const t1 = t / segments;
+                                
+                                // Catmull-Rom interpolation formula
+                                const t2 = t1 * t1;
+                                const t3 = t2 * t1;
+                                
+                                // Coefficients for Catmull-Rom interpolation
+                                const h1 = -0.5 * t3 + t2 - 0.5 * t1;
+                                const h2 = 1.5 * t3 - 2.5 * t2 + 1;
+                                const h3 = -1.5 * t3 + 2 * t2 + 0.5 * t1;
+                                const h4 = 0.5 * t3 - 0.5 * t2;
+                                
+                                // Calculate point position
+                                const x = h1 * p0.x + h2 * p1.x + h3 * p2.x + h4 * p3.x;
+                                const y = h1 * p0.y + h2 * p1.y + h3 * p2.y + h4 * p3.y;
+                                
+                                curvePoints.push({ x, y });
+                            }
+                        }
+                        
+                        // Use the curve points to draw the path
+                        if (curvePoints.length > 0) {
+                            path.moveTo(curvePoints[0].x, curvePoints[0].y);
+                            
+                            for (let i = 1; i < curvePoints.length; i++) {
+                                path.lineTo(curvePoints[i].x, curvePoints[i].y);
+                            }
+                        }
+                        break;
+                }
+                
+                path.closePath();
+                return path;
+            }
+            
+            // Update the custom path function to use control points
+            containerConfig.customPathFunction = generatePathFromControlPoints;
+            containerConfig.shape = 'custom';
+            
+            // Control if control points should be visible
+            let showControlPoints = true;
+            
+            // Draw control points
+            function drawControlPoints() {
+                if (!showControlPoints) return;
+                
+                ctx.save();
+                
+                // Draw lines between points
+                ctx.strokeStyle = 'rgba(200, 200, 200, 0.3)';
+                ctx.beginPath();
+                for (let i = 0; i < controlPoints.length; i++) {
+                    const point = controlPoints[i];
+                    const nextPoint = controlPoints[(i + 1) % controlPoints.length];
                     
-                    if (distance < maxDistance) {
-                        const force = 2 * (1 - distance / maxDistance);
-                        const angle = Math.atan2(dy, dx);
-                        particle.vx += Math.cos(angle) * force;
-                        particle.vy += Math.sin(angle) * force;
+                    ctx.moveTo(point.x, point.y);
+                    ctx.lineTo(nextPoint.x, nextPoint.y);
+                }
+                ctx.stroke();
+                
+                // Draw points
+                for (let i = 0; i < controlPoints.length; i++) {
+                    const point = controlPoints[i];
+                    
+                    // Draw control point
+                    ctx.fillStyle = point.isDragging ? 'rgba(255, 100, 100, 0.8)' : 'rgba(200, 200, 200, 0.8)';
+                    ctx.beginPath();
+                    ctx.arc(point.x, point.y, 8, 0, Math.PI * 2);
+                    ctx.fill();
+                    
+                    // Draw point number
+                    ctx.fillStyle = 'rgba(0, 0, 0, 0.8)';
+                    ctx.font = '10px Arial';
+                    ctx.textAlign = 'center';
+                    ctx.textBaseline = 'middle';
+                    ctx.fillText(i + 1, point.x, point.y);
+                }
+                
+                ctx.restore();
+            }
+            
+            // Mouse interaction variables
+            let isDragging = false;
+            let selectedPointIndex = -1;
+            let isAddingPoint = false;
+            let nearestSegmentIndex = -1;
+            
+            // Distance from point to line segment
+            function distanceToSegment(px, py, x1, y1, x2, y2) {
+                const A = px - x1;
+                const B = py - y1;
+                const C = x2 - x1;
+                const D = y2 - y1;
+                
+                const dot = A * C + B * D;
+                const lenSq = C * C + D * D;
+                let param = -1;
+                
+                if (lenSq !== 0) {
+                    param = dot / lenSq;
+                }
+                
+                let xx, yy;
+                
+                if (param < 0) {
+                    xx = x1;
+                    yy = y1;
+                } else if (param > 1) {
+                    xx = x2;
+                    yy = y2;
+                } else {
+                    xx = x1 + param * C;
+                    yy = y1 + param * D;
+                }
+                
+                const dx = px - xx;
+                const dy = py - yy;
+                
+                return {
+                    distance: Math.sqrt(dx * dx + dy * dy),
+                    param: param,
+                    x: xx,
+                    y: yy
+                };
+            }
+            
+            // Helper to find nearest segment to a point
+            function findNearestSegment(x, y) {
+                let minDistance = Infinity;
+                let segmentIndex = -1;
+                let insertPosition = -1;
+                
+                for (let i = 0; i < controlPoints.length; i++) {
+                    const p1 = controlPoints[i];
+                    const p2 = controlPoints[(i + 1) % controlPoints.length];
+                    
+                    const result = distanceToSegment(x, y, p1.x, p1.y, p2.x, p2.y);
+                    
+                    if (result.distance < minDistance) {
+                        minDistance = result.distance;
+                        segmentIndex = i;
+                        insertPosition = (i + 1) % controlPoints.length;
                     }
-                });
+                }
+                
+                return { segmentIndex, minDistance, insertPosition };
+            }
+            
+            // Mouse event handlers
+            canvas.addEventListener('mousedown', function(e) {
+                const rect = canvas.getBoundingClientRect();
+                const mouseX = e.clientX - rect.left;
+                const mouseY = e.clientY - rect.top;
+                
+                // Check if clicked on a control point
+                for (let i = 0; i < controlPoints.length; i++) {
+                    const point = controlPoints[i];
+                    const dx = point.x - mouseX;
+                    const dy = point.y - mouseY;
+                    const distance = Math.sqrt(dx * dx + dy * dy);
+                    
+                    if (distance < 10) { // Control point radius for hitbox
+                        // Start dragging this point
+                        isDragging = true;
+                        selectedPointIndex = i;
+                        point.isDragging = true;
+                        
+                        // If shift is pressed, remove point
+                        if (e.shiftKey && controlPoints.length > 3) {
+                            controlPoints.splice(i, 1);
+                            isDragging = false;
+                        }
+                        
+                        return;
+                    }
+                }
+                
+                // If Alt key is pressed, check if we're near a segment to add a point
+                if (e.altKey) {
+                    const { segmentIndex, minDistance, insertPosition } = findNearestSegment(mouseX, mouseY);
+                    
+                    if (minDistance < 20) { // Distance threshold for adding points
+                        // Add a new point at this position
+                        controlPoints.splice(insertPosition, 0, {
+                            x: mouseX,
+                            y: mouseY,
+                            isDragging: true
+                        });
+                        
+                        // Start dragging the new point
+                        isDragging = true;
+                        selectedPointIndex = insertPosition;
+                        return;
+                    }
+                }
+                
+                // If we're inside the container, create a disturbance
+                if (isPointInContainer(mouseX, mouseY, containerPath)) {
+                    particles.forEach(particle => {
+                        const dx = particle.x - mouseX;
+                        const dy = particle.y - mouseY;
+                        const distance = Math.sqrt(dx * dx + dy * dy);
+                        const maxDistance = 200;
+                        
+                        if (distance < maxDistance) {
+                            const force = 2 * (1 - distance / maxDistance);
+                            const angle = Math.atan2(dy, dx);
+                            particle.vx += Math.cos(angle) * force;
+                            particle.vy += Math.sin(angle) * force;
+                        }
+                    });
+                }
             });
+            
+            canvas.addEventListener('mousemove', function(e) {
+                const rect = canvas.getBoundingClientRect();
+                const mouseX = e.clientX - rect.left;
+                const mouseY = e.clientY - rect.top;
+                
+                // Highlight the nearest segment when Alt is pressed (for adding points)
+                if (e.altKey) {
+                    const { segmentIndex, minDistance } = findNearestSegment(mouseX, mouseY);
+                    
+                    if (minDistance < 20) { // Distance threshold for highlighting
+                        nearestSegmentIndex = segmentIndex;
+                    } else {
+                        nearestSegmentIndex = -1;
+                    }
+                } else {
+                    nearestSegmentIndex = -1;
+                }
+                
+                // If dragging a control point, update its position
+                if (isDragging && selectedPointIndex >= 0 && selectedPointIndex < controlPoints.length) {
+                    controlPoints[selectedPointIndex].x = mouseX;
+                    controlPoints[selectedPointIndex].y = mouseY;
+                    
+                    // Update the container path
+                    containerPath = generatePathFromControlPoints();
+                    
+                    // Reset particles that are now outside the container
+                    particles.forEach(particle => {
+                        if (!isPointInContainer(particle.x, particle.y, containerPath)) {
+                            particle.reset(particle.colorIndex);
+                            
+                            // Ensure new particle starts inside the container
+                            while (!isPointInContainer(particle.x, particle.y, containerPath)) {
+                                particle.x = Math.random() * canvas.width;
+                                particle.y = Math.random() * canvas.height;
+                            }
+                        }
+                    });
+                }
+            });
+            
+            canvas.addEventListener('mouseup', function() {
+                // Stop dragging
+                if (isDragging && selectedPointIndex >= 0 && selectedPointIndex < controlPoints.length) {
+                    controlPoints[selectedPointIndex].isDragging = false;
+                }
+                
+                isDragging = false;
+                selectedPointIndex = -1;
+            });
+            
+            // Add keyboard shortcuts
+            document.addEventListener('keydown', function(e) {
+                // 'R' key - Reset to circular shape
+                if (e.key.toLowerCase() === 'r') {
+                    controlPoints.length = 0; // Clear existing points
+                    
+                    // Recreate circular points
+                    for (let i = 0; i < numInitialPoints; i++) {
+                        const angle = (i / numInitialPoints) * Math.PI * 2;
+                        const radius = Math.min(canvas.width, canvas.height) / 3;
+                        const x = canvas.width / 2 + Math.cos(angle) * radius;
+                        const y = canvas.height / 2 + Math.sin(angle) * radius;
+                        controlPoints.push({ x, y, isDragging: false });
+                    }
+                    
+                    containerPath = generatePathFromControlPoints();
+                }
+                
+                // 'C' key - Add more control points for finer control
+                if (e.key.toLowerCase() === 'c') {
+                    const newPoints = [];
+                    
+                    // Add a new point between each existing pair
+                    for (let i = 0; i < controlPoints.length; i++) {
+                        const current = controlPoints[i];
+                        const next = controlPoints[(i + 1) % controlPoints.length];
+                        
+                        newPoints.push(current);
+                        newPoints.push({
+                            x: (current.x + next.x) / 2,
+                            y: (current.y + next.y) / 2,
+                            isDragging: false
+                        });
+                    }
+                    
+                    // Replace control points with new array
+                    controlPoints.splice(0, controlPoints.length, ...newPoints);
+                    containerPath = generatePathFromControlPoints();
+                }
+                
+                // 'H' key - Toggle control points visibility
+                if (e.key.toLowerCase() === 'h') {
+                    showControlPoints = !showControlPoints;
+                }
+                
+                // 'S' key - Switch curve types
+                if (e.key.toLowerCase() === 's') {
+                    const curveTypes = ['bezier', 'cardinal', 'catmull-rom'];
+                    const currentIndex = curveTypes.indexOf(pathConfig.curveType);
+                    const nextIndex = (currentIndex + 1) % curveTypes.length;
+                    pathConfig.curveType = curveTypes[nextIndex];
+                    containerPath = generatePathFromControlPoints();
+                    
+                    // Show temporary notification
+                    const notification = document.createElement('div');
+                    notification.style.position = 'absolute';
+                    notification.style.top = '50%';
+                    notification.style.left = '50%';
+                    notification.style.transform = 'translate(-50%, -50%)';
+                    notification.style.padding = '10px 20px';
+                    notification.style.backgroundColor = 'rgba(0, 0, 0, 0.7)';
+                    notification.style.color = 'white';
+                    notification.style.borderRadius = '5px';
+                    notification.style.fontFamily = 'Arial, sans-serif';
+                    notification.style.fontSize = '16px';
+                    notification.style.zIndex = '2000';
+                    notification.textContent = `Curve type: ${pathConfig.curveType}`;
+                    
+                    document.body.appendChild(notification);
+                    setTimeout(() => {
+                        notification.style.opacity = '0';
+                        notification.style.transition = 'opacity 0.5s';
+                        setTimeout(() => notification.remove(), 500);
+                    }, 1500);
+                }
+            });
+            
+            // Instructions overlay
+            const instructions = document.createElement('div');
+            instructions.style.position = 'absolute';
+            instructions.style.bottom = '10px';
+            instructions.style.left = '10px';
+            instructions.style.padding = '10px';
+            instructions.style.backgroundColor = 'rgba(0, 0, 0, 0.5)';
+            instructions.style.borderRadius = '5px';
+            instructions.style.color = '#fff';
+            instructions.style.fontFamily = 'Arial, sans-serif';
+            instructions.style.zIndex = '1000';
+            instructions.style.fontSize = '12px';
+            instructions.style.lineHeight = '1.4';
+            instructions.style.maxWidth = '300px';
+            
+            instructions.innerHTML = `
+                <strong>Drag Controls:</strong><br>
+                • Drag points to change shape<br>
+                • Alt+Click to add point<br>
+                • Shift+Click to remove point<br>
+                • Click inside to disturb smoke<br>
+                • Press R to reset shape<br>
+                • Press C to refine shape
+            `;
+            
+            document.getElementById('container').appendChild(instructions);
+            
+            // Auto-hide instructions after 10 seconds
+            setTimeout(() => {
+                instructions.style.opacity = '0.3';
+                instructions.addEventListener('mouseenter', () => {
+                    instructions.style.opacity = '1';
+                });
+                instructions.addEventListener('mouseleave', () => {
+                    instructions.style.opacity = '0.3';
+                });
+            }, 10000);
         });
     </script>
 </body>
