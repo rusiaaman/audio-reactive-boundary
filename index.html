@@ -50,11 +50,13 @@
             
             // Smoke particles
             const particles = [];
-            const particleCount = 250; // Increased for more dense smoke
+            const particleCount = 250; // Back to original count
             
-            // Colors for the two smokes
-            const color1 = [76, 175, 240]; // Blue
-            const color2 = [242, 88, 53];  // Red-orange
+            // Colors for the four smokes
+            const color1 = [76, 175, 240];   // Blue
+            const color2 = [242, 88, 53];    // Red-orange
+            const color3 = [120, 220, 80];   // Green
+            const color4 = [220, 180, 30];   // Yellow-gold
             
             // Animation timing
             let lastTime = 0;
@@ -67,40 +69,62 @@
             
             // Particle class
             class SmokeParticle {
-                constructor(isFirstColor) {
-                    this.reset(isFirstColor);
+                constructor(colorIndex) {
+                    this.reset(colorIndex);
                 }
                 
-                reset(isFirstColor) {
-                    // More dramatically separated initial positions
-                    if (isFirstColor) {
-                        // Left side particles
-                        this.x = 150 + Math.random() * 100;
-                    } else {
-                        // Right side particles
-                        this.x = 550 + Math.random() * 100;
+                reset(colorIndex) {
+                    // Store color index (0-3)
+                    this.colorIndex = colorIndex;
+                    
+                    // Position based on color index (four quadrants) - more spread out positions
+                    switch(colorIndex) {
+                        case 0: // Blue - top left
+                            this.x = 100 + Math.random() * 150; // Wider spread
+                            this.y = 100 + Math.random() * 150;
+                            this.initialDirection = 1; // Move right
+                            break;
+                        case 1: // Red-orange - top right
+                            this.x = 550 + Math.random() * 150; // Wider spread
+                            this.y = 100 + Math.random() * 150;
+                            this.initialDirection = -1; // Move left
+                            break;
+                        case 2: // Green - bottom left
+                            this.x = 100 + Math.random() * 150; // Wider spread
+                            this.y = 350 + Math.random() * 150;
+                            this.initialDirection = 1; // Move right
+                            break;
+                        case 3: // Yellow-gold - bottom right
+                            this.x = 550 + Math.random() * 150; // Wider spread
+                            this.y = 350 + Math.random() * 150;
+                            this.initialDirection = -1; // Move left
+                            break;
                     }
                     
-                    // Position vertically in the middle area
-                    this.y = 250 + Math.random() * 100;
-                    
-                    // Size and shape
-                    this.radius = 30 + Math.random() * 40; // Slightly smaller for faster movement perception
-                    this.isFirstColor = isFirstColor;
+                    // Size and shape - back to original sizes
+                    this.radius = 30 + Math.random() * 40;
                     
                     // Initial velocities - stronger initial horizontal component
-                    const initialDirection = isFirstColor ? 1 : -1; // Different initial directions based on color
-                    this.vx = initialDirection * (0.5 + Math.random() * 0.5); // Stronger initial horizontal movement
+                    this.vx = this.initialDirection * (0.5 + Math.random() * 0.5); // Stronger initial horizontal movement
                     this.vy = (Math.random() - 0.5) * 0.3; // Less vertical movement initially
                     
-                    // Appearance
+                    // Appearance - original opacity
                     this.opacity = 0;
                     this.maxOpacity = 0.2 + Math.random() * 0.3;
                     this.growing = true;
                     
-                    // Choose color
-                    const baseColor = isFirstColor ? color1 : color2;
-                    this.color = [...baseColor];
+                    // Choose color based on colorIndex - with fallback for safety
+                    let baseColor;
+                    switch(this.colorIndex) {
+                        case 0: baseColor = color1; break; // Blue
+                        case 1: baseColor = color2; break; // Red-orange
+                        case 2: baseColor = color3; break; // Green
+                        case 3: baseColor = color4; break; // Yellow-gold
+                        default: baseColor = color1; break; // Fallback to blue if index is invalid
+                    }
+                    
+                    // Ensure baseColor is valid before spreading
+                    this.color = baseColor ? [...baseColor] : [76, 175, 240]; // Default to blue if undefined
                     
                     // Life tracking
                     this.life = 0;
@@ -131,7 +155,7 @@
                     const centerInfluence = 0.001;
                     const centerX = canvas.width / 2;
                     
-                    // Lighter pull toward center to allow more horizontal freedom
+                    // Original center pull
                     this.vx += (centerX - this.x) * (centerInfluence * 0.5);
                     
                     // Apply wind effect - stronger horizontal component
@@ -140,18 +164,19 @@
                     // Add a base horizontal drift in addition to the oscillating wind
                     this.vx += Math.sin(windTime * 0.5) * 0.1;
                     
-                    // Reduced vertical component to emphasize horizontal movement
-                    this.vy += verticalWind + (Math.random() - 0.5) * 0.02;
+                    // Add more random movement to prevent clumping
+                    this.vx += (Math.random() - 0.5) * 0.15; // More randomness
+                    this.vy += verticalWind + (Math.random() - 0.5) * 0.15; // More vertical randomness
                     
-                    // Reduce viscosity for horizontal movement to maintain momentum
-                    this.vx *= 0.99; // Less dampening for horizontal motion
-                    this.vy *= 0.97; // More dampening for vertical motion to emphasize horizontal flow
+                    // Apply viscosity - original values
+                    this.vx *= 0.985;
+                    this.vy *= 0.985;
                     
                     // Apply velocity
                     this.x += this.vx;
                     this.y += this.vy;
                     
-                    // Slow expansion of smoke radius - varies based on wind intensity
+                    // Original expansion rate
                     const expansionRate = 0.15 + Math.abs(windDirection) * 0.3;
                     this.radius += expansionRate;
                     
@@ -166,16 +191,32 @@
                             // If particles are close enough to interact
                             if (distance < minDist * 0.7) {
                                 // Color mixing when particles of different colors meet
-                                if (this.isFirstColor !== other.isFirstColor) {
-                                    // Blend colors gradually
-                                    for (let i = 0; i < 3; i++) {
-                                        this.color[i] = this.color[i] * 0.99 + 
-                                                      (this.isFirstColor ? color2[i] : color1[i]) * 0.01;
+                                if (this.colorIndex !== other.colorIndex) {
+                                    // Determine the other particle's color with fallback
+                                    let otherColor;
+                                    switch(other.colorIndex) {
+                                        case 0: otherColor = color1; break; // Blue
+                                        case 1: otherColor = color2; break; // Red-orange
+                                        case 2: otherColor = color3; break; // Green
+                                        case 3: otherColor = color4; break; // Yellow-gold
+                                        default: otherColor = null; break;  // Invalid index
+                                    }
+                                    
+                                    // Only blend if both colors are valid
+                                    if (otherColor && this.color) {
+                                        // Blend colors gradually
+                                        for (let i = 0; i < 3; i++) {
+                                            this.color[i] = this.color[i] * 0.99 + otherColor[i] * 0.01;
+                                        }
                                     }
                                 }
                                 
                                 // Repulsion (viscous push)
-                                const repulsion = 0.02;
+                                let repulsion = 0.02; // Original repulsion force
+                                // New colors have slightly different repulsion force
+                                if (this.colorIndex >= 2 || other.colorIndex >= 2) {
+                                    repulsion = 0.018; // Original difference
+                                }
                                 const nx = dx / distance;
                                 const ny = dy / distance;
                                 this.vx -= nx * repulsion;
@@ -188,7 +229,7 @@
                     if (this.opacity <= 0 || this.life >= this.maxLife || 
                         this.y < -this.radius || this.y > canvas.height + this.radius ||
                         this.x < -this.radius || this.x > canvas.width + this.radius) {
-                        this.reset(this.isFirstColor);
+                        this.reset(this.colorIndex);
                     }
                 }
                 
@@ -216,8 +257,8 @@
             // Initialize particles
             function init() {
                 for (let i = 0; i < particleCount; i++) {
-                    // Alternate colors
-                    particles.push(new SmokeParticle(i % 2 === 0));
+                    // Create particles of all four colors, evenly distributed
+                    particles.push(new SmokeParticle(i % 4));
                 }
             }
             
@@ -233,8 +274,8 @@
                 // Update wind time - creates smooth changes in wind
                 windTime += windChangeRate;
                 
-                // Partially clear canvas for smoke trails - less clearing for more persistence
-                ctx.fillStyle = 'rgba(17, 17, 17, 0.03)'; // More persistence
+                // Partially clear canvas for smoke trails - back to original rate
+                ctx.fillStyle = 'rgba(17, 17, 17, 0.03)'; // Original persistence
                 ctx.fillRect(0, 0, canvas.width, canvas.height);
                 
                 // Draw wind indicator arrow
