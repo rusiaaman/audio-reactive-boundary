@@ -18,11 +18,9 @@
         }
         
         #container {
-            width: 800px;
-            height: 600px;
+            width: 100vw;
+            height: 100vh;
             background-color: #111;
-            border: 4px solid #444;
-            border-radius: 8px;
             position: relative;
             overflow: hidden;
         }
@@ -44,13 +42,19 @@
             const canvas = document.getElementById('smokeCanvas');
             const ctx = canvas.getContext('2d');
             
-            // Set canvas size to match container
-            canvas.width = 800;
-            canvas.height = 600;
+            // Set canvas size to match window size
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
             
-            // Smoke particles
+            // Resize canvas when window size changes
+            window.addEventListener('resize', function() {
+                canvas.width = window.innerWidth;
+                canvas.height = window.innerHeight;
+            });
+            
+            // Smoke particles - increased density for fuller coverage with slower particles
             const particles = [];
-            const particleCount = 250; // Back to original count
+            const particleCount = Math.floor((window.innerWidth * window.innerHeight) / 1500); // More particles for better coverage
             
             // Colors for the four smokes
             const color1 = [76, 175, 240];   // Blue
@@ -63,9 +67,9 @@
             const fps = 60;
             const interval = 1000 / fps;
             
-            // Wind simulation variables - faster change rate for more dynamic movement
+            // Reduced wind influence to support more random movement
             let windTime = 0;
-            const windChangeRate = 0.005;
+            const windChangeRate = 0.001; // Even slower change for subtlety
             
             // Particle class
             class SmokeParticle {
@@ -77,40 +81,24 @@
                     // Store color index (0-3)
                     this.colorIndex = colorIndex;
                     
-                    // Position based on color index (four quadrants) - more spread out positions
-                    switch(colorIndex) {
-                        case 0: // Blue - top left
-                            this.x = 100 + Math.random() * 150; // Wider spread
-                            this.y = 100 + Math.random() * 150;
-                            this.initialDirection = 1; // Move right
-                            break;
-                        case 1: // Red-orange - top right
-                            this.x = 550 + Math.random() * 150; // Wider spread
-                            this.y = 100 + Math.random() * 150;
-                            this.initialDirection = -1; // Move left
-                            break;
-                        case 2: // Green - bottom left
-                            this.x = 100 + Math.random() * 150; // Wider spread
-                            this.y = 350 + Math.random() * 150;
-                            this.initialDirection = 1; // Move right
-                            break;
-                        case 3: // Yellow-gold - bottom right
-                            this.x = 550 + Math.random() * 150; // Wider spread
-                            this.y = 350 + Math.random() * 150;
-                            this.initialDirection = -1; // Move left
-                            break;
-                    }
+                    // Position particles randomly across the entire screen
+                    this.x = Math.random() * canvas.width;
+                    this.y = Math.random() * canvas.height;
                     
-                    // Size and shape - back to original sizes
-                    this.radius = 30 + Math.random() * 40;
+                    // Random initial direction instead of inward movement
+                    this.initialDirection = Math.random() * Math.PI * 2; // Random angle in radians
                     
-                    // Initial velocities - stronger initial horizontal component
-                    this.vx = this.initialDirection * (0.5 + Math.random() * 0.5); // Stronger initial horizontal movement
-                    this.vy = (Math.random() - 0.5) * 0.3; // Less vertical movement initially
+                    // Larger particles to ensure full screen coverage
+                    this.radius = 50 + Math.random() * 70;
                     
-                    // Appearance - original opacity
-                    this.opacity = 0;
-                    this.maxOpacity = 0.2 + Math.random() * 0.3;
+                    // Initial velocities - based on random direction angle
+                    const speed = 0.05 + Math.random() * 0.1; // Very slow base speed
+                    this.vx = Math.cos(this.initialDirection) * speed; // X component of direction
+                    this.vy = Math.sin(this.initialDirection) * speed; // Y component of direction
+                    
+                    // Start with higher opacity to fill screen immediately
+                    this.opacity = 0.1 + Math.random() * 0.1;
+                    this.maxOpacity = 0.2 + Math.random() * 0.2;
                     this.growing = true;
                     
                     // Choose color based on colorIndex - with fallback for safety
@@ -145,39 +133,48 @@
                         this.opacity -= 0.002;
                     }
                     
-                    // Movement
-                    // Much stronger wind effect for more noticeable horizontal movement
-                    const windStrength = 0.3; // Significantly increased
-                    const windDirection = Math.sin(windTime + this.x * 0.01) * windStrength;
-                    const verticalWind = Math.cos(windTime * 0.7 + this.y * 0.008) * windStrength * 0.3;
+                    // Movement - reduced wind strength for less overall movement
+                    const windStrength = 0.05; // Significantly reduced
+                    const windDirection = Math.sin(windTime + this.x * 0.005) * windStrength;
+                    const verticalWind = Math.cos(windTime * 0.4 + this.y * 0.004) * windStrength * 0.2;
                     
                     // Add some drift based on position to create mixing
                     const centerInfluence = 0.001;
                     const centerX = canvas.width / 2;
                     
-                    // Original center pull
-                    this.vx += (centerX - this.x) * (centerInfluence * 0.5);
+                    // Remove center pull for truly random movement
+                    // No center influence code here
                     
-                    // Apply wind effect - stronger horizontal component
-                    this.vx += windDirection;
+                    // Slight influence from wind but primarily random direction
+                    this.vx += windDirection * 0.1; // Reduced wind effect
+                    this.vy += verticalWind * 0.1;
                     
-                    // Add a base horizontal drift in addition to the oscillating wind
-                    this.vx += Math.sin(windTime * 0.5) * 0.1;
+                    // Small random movement variation
+                    this.vx += (Math.random() - 0.5) * 0.03;
+                    this.vy += (Math.random() - 0.5) * 0.03;
                     
-                    // Add more random movement to prevent clumping
-                    this.vx += (Math.random() - 0.5) * 0.15; // More randomness
-                    this.vy += verticalWind + (Math.random() - 0.5) * 0.15; // More vertical randomness
+                    // Occasionally change direction slightly for more random movement
+                    if (Math.random() < 0.01) { // 1% chance each frame
+                        const angleChange = (Math.random() - 0.5) * 0.2; // Small angle change
+                        const currentAngle = Math.atan2(this.vy, this.vx);
+                        const newAngle = currentAngle + angleChange;
+                        
+                        // Calculate new velocity components while maintaining speed
+                        const currentSpeed = Math.sqrt(this.vx * this.vx + this.vy * this.vy);
+                        this.vx = Math.cos(newAngle) * currentSpeed;
+                        this.vy = Math.sin(newAngle) * currentSpeed;
+                    }
                     
-                    // Apply viscosity - original values
-                    this.vx *= 0.985;
-                    this.vy *= 0.985;
+                    // Apply strong viscosity for very slow movement
+                    this.vx *= 0.98;
+                    this.vy *= 0.98;
                     
                     // Apply velocity
                     this.x += this.vx;
                     this.y += this.vy;
                     
-                    // Original expansion rate
-                    const expansionRate = 0.15 + Math.abs(windDirection) * 0.3;
+                    // Reduced expansion rate
+                    const expansionRate = 0.05 + Math.abs(windDirection) * 0.1;
                     this.radius += expansionRate;
                     
                     // Handle collisions with other particles (viscous mixing)
@@ -226,10 +223,26 @@
                     }
                     
                     // Reset when faded or off-screen
-                    if (this.opacity <= 0 || this.life >= this.maxLife || 
-                        this.y < -this.radius || this.y > canvas.height + this.radius ||
-                        this.x < -this.radius || this.x > canvas.width + this.radius) {
+                    // Bounce off edges instead of resetting to maintain better screen coverage
+                    if (this.opacity <= 0 || this.life >= this.maxLife) {
                         this.reset(this.colorIndex);
+                    } else {
+                        // Bounce off edges with slight damping
+                        if (this.x < this.radius) {
+                            this.x = this.radius;
+                            this.vx = Math.abs(this.vx) * 0.8; // Reverse direction and dampen
+                        } else if (this.x > canvas.width - this.radius) {
+                            this.x = canvas.width - this.radius;
+                            this.vx = -Math.abs(this.vx) * 0.8; // Reverse direction and dampen
+                        }
+                        
+                        if (this.y < this.radius) {
+                            this.y = this.radius;
+                            this.vy = Math.abs(this.vy) * 0.8; // Reverse direction and dampen
+                        } else if (this.y > canvas.height - this.radius) {
+                            this.y = canvas.height - this.radius;
+                            this.vy = -Math.abs(this.vy) * 0.8; // Reverse direction and dampen
+                        }
                     }
                 }
                 
@@ -271,46 +284,14 @@
                 if (elapsed < interval) return;
                 lastTime = currentTime - (elapsed % interval);
                 
-                // Update wind time - creates smooth changes in wind
-                windTime += windChangeRate;
+                // Reduced wind time rate for slower changes
+                windTime += windChangeRate * 0.6;
                 
-                // Partially clear canvas for smoke trails - back to original rate
-                ctx.fillStyle = 'rgba(17, 17, 17, 0.03)'; // Original persistence
+                // Reduced clearing rate for more persistent smoke effect
+                ctx.fillStyle = 'rgba(17, 17, 17, 0.01)'; // Less clearing for more density
                 ctx.fillRect(0, 0, canvas.width, canvas.height);
                 
-                // Draw wind indicator arrow
-                const windIndicatorX = 50;
-                const windIndicatorY = 50;
-                const globalWindDirection = Math.sin(windTime) * 20; // Current wind direction
-                
-                // Draw arrow
-                ctx.save();
-                ctx.fillStyle = 'rgba(255, 255, 255, 0.6)';
-                ctx.strokeStyle = 'rgba(255, 255, 255, 0.8)';
-                ctx.lineWidth = 2;
-                
-                // Arrow line
-                ctx.beginPath();
-                ctx.moveTo(windIndicatorX - globalWindDirection, windIndicatorY);
-                ctx.lineTo(windIndicatorX + globalWindDirection, windIndicatorY);
-                ctx.stroke();
-                
-                // Arrow head
-                const headSize = 6;
-                if (globalWindDirection > 0) { // Pointing right
-                    ctx.beginPath();
-                    ctx.moveTo(windIndicatorX + globalWindDirection + headSize, windIndicatorY);
-                    ctx.lineTo(windIndicatorX + globalWindDirection, windIndicatorY - headSize);
-                    ctx.lineTo(windIndicatorX + globalWindDirection, windIndicatorY + headSize);
-                    ctx.fill();
-                } else { // Pointing left
-                    ctx.beginPath();
-                    ctx.moveTo(windIndicatorX - globalWindDirection - headSize, windIndicatorY);
-                    ctx.lineTo(windIndicatorX - globalWindDirection, windIndicatorY - headSize);
-                    ctx.lineTo(windIndicatorX - globalWindDirection, windIndicatorY + headSize);
-                    ctx.fill();
-                }
-                ctx.restore();
+                // Remove wind indicator since movement is now primarily random
                 
                 // Update and draw particles
                 particles.forEach(particle => {
