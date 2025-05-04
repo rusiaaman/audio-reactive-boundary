@@ -118,7 +118,11 @@
                         path.lineTo(x, y);
                     }
                 } else {
-                    // Animation complete, use final shape
+                    // Animation complete, use final shape with vibration
+                    
+                    // Smooth the vibration effect based on volume - increased sensitivity
+                    const targetVibration = (averageVolume / 15) * VIBRATION_INTENSITY; // Scaled volume with much lower divisor for sensitivity
+                    currentVibration = currentVibration * (1 - VIBRATION_SMOOTHING) + targetVibration * VIBRATION_SMOOTHING;
                     
                     // Bottom line at 1/3 from top
                     const bottomY = height / 3;
@@ -129,24 +133,78 @@
                     // Draw bottom line to bottom right
                     path.lineTo(width, bottomY);
                     
-                    // Create the gaussian curve for the top boundary with fewer points
-                    const gaussianPoints = 50; // Reduced for performance
-                    const amplitude = bottomY * 0.8; // Height of the gaussian curve
+                    // Create the gaussian curve for the top boundary with more points for smoothness
+                    const gaussianPoints = 100; // Increased for smoother curves
+                    const baseAmplitude = bottomY * 0.8; // Base height of the gaussian curve
                     const mean = width / 2; // Center of the curve
                     const stdDev = width / 6; // Width of the curve
                     
-                    // Draw the gaussian curve from right to left
+                    // Use the dedicated vibrationTime for consistent vibration cycles
+                    const vibrationPhase = vibrationTime * 2; // Phase for the vibration
+                    
+                    // Pre-calculate points to allow smoothing
+                    const curvePoints = [];
+                    
+                    // First pass: calculate raw points
                     for (let i = gaussianPoints; i >= 0; i--) {
                         const x = width * (i / gaussianPoints);
-                        // Gaussian function: y = amplitude * e^(-(x-mean)²/(2*stdDev²))
-                        const gaussianY = amplitude * Math.exp(-Math.pow(x - mean, 2) / (2 * Math.pow(stdDev, 2)));
+                        
+                        // Calculate position in the curve (0 at edges, 1 at center)
+                        const position = Math.exp(-Math.pow(x - mean, 2) / (2 * Math.pow(stdDev, 2)));
+                        
+                        // Base Gaussian function
+                        const baseGaussianY = baseAmplitude * position;
+                        
+                        // Create smooth, controlled sinusoidal vibration
+                        // Lower frequency with consistent phase across the curve
+                        const vibrationFrequency = 2; // Consistent lower frequency 
+                        const vibrationAmount = currentVibration * baseAmplitude * 0.6;
+                        
+                        // Pure sinusoidal vibration with no randomness
+                        const vibration = Math.sin(vibrationPhase + x * 0.01 * vibrationFrequency) * vibrationAmount * position;
+                        
+                        // Ensure vibration only goes upward (negative Y direction on canvas)
+                        const gaussianY = baseGaussianY + Math.abs(vibration);
+                        
                         // Invert Y (lower Y is higher on canvas)
                         const y = bottomY - gaussianY;
                         
-                        path.lineTo(x, y);
+                        curvePoints.push({ x, y });
+                    }
+                    
+                    // Second pass: Apply Gaussian smoothing to points
+                    const smoothedPoints = [];
+                    const smoothingRadius = 3; // How many points to consider on each side
+                    
+                    for (let i = 0; i < curvePoints.length; i++) {
+                        // Apply Gaussian smoothing to this point
+                        let sum = 0;
+                        let weightSum = 0;
+                        
+                        for (let j = Math.max(0, i - smoothingRadius); j <= Math.min(curvePoints.length - 1, i + smoothingRadius); j++) {
+                            // Calculate Gaussian weight based on distance from center
+                            const distance = Math.abs(i - j);
+                            const weight = Math.exp(-(distance * distance) / (2 * smoothingRadius));
+                            
+                            sum += curvePoints[j].y * weight;
+                            weightSum += weight;
+                        }
+                        
+                        // Weighted average for this point
+                        smoothedPoints.push({
+                            x: curvePoints[i].x,
+                            y: sum / weightSum
+                        });
+                    }
+                    
+                    // Draw the smoothed curve
+                    for (let i = 0; i < smoothedPoints.length; i++) {
+                        const point = smoothedPoints[i];
+                        path.lineTo(point.x, point.y);
                     }
                 }
                 
+                // Close the path
                 path.closePath();
                 return path;
             }
@@ -343,6 +401,12 @@
             let lastTime = 0;
             const fps = 30; // Reduced FPS for better performance
             const interval = 1000 / fps;
+            
+            // Gaussian vibration parameters
+            const VIBRATION_INTENSITY = 0.18; // Moderate intensity with smoother transitions
+            const VIBRATION_SMOOTHING = 0.35; // More smoothing to prevent abrupt changes
+            let currentVibration = 0; // Current vibration offset
+            let vibrationTime = 0; // Track time for consistent vibration cycles
             
             // Audio reactive variables
             let audioContext;
@@ -863,13 +927,16 @@
                     return averageVolume * 0.7 + newVolume * 0.3; // Some smoothing for decreases
                 }
             }
-
+            
             // Global variable for pulse effect
             let pulseEffect = {
                 active: false,
                 intensity: 0,
                 decay: 0.1
             };
+
+            // State tracking for clearing logic
+            let wasPreviouslyQuiet = true; 
             
             // Animation loop
             function animate(currentTime) {
@@ -885,11 +952,13 @@
                 averageVolume = getAverageVolume();
                 
                 // Update wind time based on voice activity - almost freeze when quiet
-                const isQuiet = averageVolume < VOICE_THRESHOLD + 1;
-                if (isQuiet) {
+                const isCurrentlyQuiet = averageVolume < VOICE_THRESHOLD + 1; // Renamed for clarity
+                if (isCurrentlyQuiet) {
                     windTime += windChangeRate * 0.01; // Extremely slow wind change when quiet
+                    vibrationTime += 0.008; // Slightly faster minimal vibration even when quiet
                 } else {
                     windTime += windChangeRate * 0.6;  // Normal wind change when voice active
+                    vibrationTime += 0.05 * (1 + averageVolume / 40); // Much faster vibration with higher volume
                 }
                 
                 // Detect significant volume increases for pulse effect
@@ -907,6 +976,9 @@
                         pulseEffect.intensity = 0;
                     }
                 }
+                
+                // Detect transition from active to quiet state
+                const didTransitionToQuiet = !wasPreviouslyQuiet && isCurrentlyQuiet;
 
                 // During animation, we might need to clear particles that get stuck outside
                 // the container as it shrinks
@@ -930,31 +1002,73 @@
                     ctx.fillStyle = 'rgba(17, 17, 17, 0.3)'; 
                     ctx.fillRect(0, 0, canvas.width, canvas.height);
                     
-                    // Update container path during animation
+                    // Always update container path during animation
                     containerPath = createAnimatedContainer();
                 } else {
-                    // After animation completes, use more aggressive clearing for better color definition
-                    // Apply pulse effect to background if active
-                    if (pulseEffect.active) {
-                        // Create a pulsing background based on volume
-                        const baseColor = 17; // Dark gray
-                        const pulseColor = Math.min(50, baseColor + Math.floor(pulseEffect.intensity * 40));
-                        ctx.fillStyle = `rgba(${pulseColor}, ${pulseColor}, ${pulseColor}, 0.15)`;
+                // After animation completes, regenerate path every frame for vibration
+                    containerPath = createAnimatedContainer();
+                    
+                    // --- Clearing Logic ---
+                    if (didTransitionToQuiet) {
+                        // Perform multiple full clears when transitioning to quiet to aggressively remove halos
+                        // First immediate clear
+                        ctx.fillStyle = 'rgb(17, 17, 17)'; // Opaque background color
                         ctx.fillRect(0, 0, canvas.width, canvas.height);
-                    } else {
-                        // More clearing for sharper, less translucent appearance of new particles
-                        const isQuiet = averageVolume < VOICE_THRESHOLD + 1;
-                        // When quiet, clear very little to maintain stable image
-                        // When active, clear more to allow fresh colors to dominate
-                        const clearAmount = isQuiet ? 0.005 : 0.03;
-                        ctx.fillStyle = `rgba(17, 17, 17, ${clearAmount})`;
-                        ctx.fillRect(0, 0, canvas.width, canvas.height);
+                        
+                        // Set a flag to continue clearing for a few frames
+                        if (!window.forceClearFrames) {
+                            window.forceClearFrames = 5; // Clear aggressively for the next 5 frames
+                        }
+                    } else if (isCurrentlyQuiet) {
+                        // When quiet, aggressively clear until ghost images are gone
+                        if (window.forceClearFrames > 0) {
+                            // Aggressive clearing during the force clear period
+                            ctx.fillStyle = 'rgb(17, 17, 17)'; // Full opaque clear
+                            ctx.fillRect(0, 0, canvas.width, canvas.height);
+                            window.forceClearFrames--;
+                        } else if (Math.random() < 0.2) { // 20% chance each frame to do a full clear - much more frequent
+                            ctx.fillStyle = 'rgb(17, 17, 17)'; // Full clear
+                            ctx.fillRect(0, 0, canvas.width, canvas.height);
+                        } else if (pulseEffect.active) {
+                            // Apply pulse effect when active
+                            const baseColor = 17;
+                            const pulseColor = Math.min(50, baseColor + Math.floor(pulseEffect.intensity * 40));
+                            ctx.fillStyle = `rgba(${pulseColor}, ${pulseColor}, ${pulseColor}, 0.15)`;
+                            ctx.fillRect(0, 0, canvas.width, canvas.height);
+                        } else {
+                            // Standard quiet state with higher clear amount
+                            const clearAmount = 0.4; // Significantly increased for faster fading
+                            ctx.fillStyle = `rgba(17, 17, 17, ${clearAmount})`;
+                            ctx.fillRect(0, 0, canvas.width, canvas.height);
+                        }
+                    } else { // Not quiet (active speech)
+                        // Reset force clear frames counter when active
+                        window.forceClearFrames = 0;
+                        
+                        // Apply pulse effect if active
+                        if (pulseEffect.active) {
+                            const baseColor = 17;
+                            const pulseColor = Math.min(50, baseColor + Math.floor(pulseEffect.intensity * 40));
+                            // Clear aggressively for active state
+                            const clearAmount = 0.9;
+                            ctx.fillStyle = `rgba(17, 17, 17, ${clearAmount})`;
+                            ctx.fillRect(0, 0, canvas.width, canvas.height);
+                            
+                            // Draw pulse over the aggressive clear
+                            ctx.fillStyle = `rgba(${pulseColor}, ${pulseColor}, ${pulseColor}, 0.1)`;
+                            ctx.fillRect(0, 0, canvas.width, canvas.height);
+                        } else {
+                            // Active state without pulse: clear aggressively
+                            const clearAmount = 0.9;
+                            ctx.fillStyle = `rgba(17, 17, 17, ${clearAmount})`;
+                            ctx.fillRect(0, 0, canvas.width, canvas.height);
+                        }
                     }
-                }
+                 }
                 
-                // Draw container boundary
-                ctx.strokeStyle = 'rgba(100, 100, 100, 0.5)';
-                ctx.lineWidth = 2;
+                // Draw container boundary (optional, can be subtle)
+                ctx.strokeStyle = 'rgba(100, 100, 100, 0.2)'; // Make it more subtle
+                ctx.lineWidth = 1; // Thinner line
                 ctx.stroke(containerPath);
                 
                 // Update and draw particles - with performance optimizations
@@ -972,6 +1086,9 @@
                 
                 // Apply color enhancement for less translucency
                 enhanceColors(ctx, canvas.width, canvas.height);
+
+                // Update quiet state tracker for the next frame
+                wasPreviouslyQuiet = isCurrentlyQuiet;
             }
             
             // Create a public API for controlling the smoke container
@@ -1370,14 +1487,15 @@
                 isMousePressed = false;
             });
             
-            // Handle window resize
+            // Handle window resize - ensure path is regenerated correctly
             window.addEventListener('resize', function() {
                 canvas.width = window.innerWidth;
                 canvas.height = window.innerHeight;
-                // Update container path when window is resized
-                containerPath = createAnimatedContainer();
                 
-                // If animation was complete, we need to keep it complete after resize
+                // Regenerate path immediately after resize
+                containerPath = createAnimatedContainer(); 
+                
+                // If animation was complete, keep it complete
                 if (animationConfig.complete) {
                     // No need to restart animation, keep it in final state
                 } else {
@@ -1397,17 +1515,17 @@
             instructions.style.fontFamily = 'Arial, sans-serif';
             instructions.style.zIndex = '1000';
             instructions.style.fontSize = '12px';
-            instructions.style.lineHeight = '1.4';
-            instructions.style.maxWidth = '300px';
-            
-            instructions.innerHTML = `
+                instructions.style.lineHeight = '1.4';
+                instructions.style.maxWidth = '300px';
+                
+                instructions.innerHTML = `
                 <strong>Smoke Container:</strong><br>
-                • Animating to Gaussian curve top<br>
+                • Gaussian top vibrates with speech<br>
                 • Final border at 1/3 from top<br>
                 • Click inside to disturb smoke<br>
                 • <b>Speak into microphone to activate!</b><br>
                 • Animation freezes when quiet<br>
-                • Louder speech = more dramatic movement
+                • Louder speech = more dramatic movement & vibration
             `;
             
             document.getElementById('container').appendChild(instructions);
