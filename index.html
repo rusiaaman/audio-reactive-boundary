@@ -292,16 +292,23 @@
             const particles = [];
             const particleCount = Math.floor((window.innerWidth * window.innerHeight) / 3000); // Reduced particle count for better performance
             
-            // Colors for the four smokes
-            const color1 = [76, 175, 240];   // Blue
-            const color2 = [242, 88, 53];    // Red-orange
-            const color3 = [120, 220, 80];   // Green
-            const color4 = [220, 180, 30];   // Yellow-gold
+            // Colors for the four smokes - increased saturation for less translucent appearance
+            const color1 = [86, 195, 255];   // Blue - brighter
+            const color2 = [255, 95, 60];    // Red-orange - more intense
+            const color3 = [130, 255, 90];   // Green - more vivid
+            const color4 = [255, 200, 40];   // Yellow-gold - brighter
             
             // Animation timing - ensure consistent frame rate
             let lastTime = 0;
             const fps = 30; // Reduced FPS for better performance
             const interval = 1000 / fps;
+            
+            // Audio reactive variables
+            let audioContext;
+            let analyser;
+            let dataArray;
+            let averageVolume = 0;
+            let micInitialized = false;
             
             // Reduced wind influence to support more random movement
             let windTime = 0;
@@ -354,10 +361,10 @@
                     const speed = 0.05 + Math.random() * 0.1; // Very slow base speed
                     this.vx = Math.cos(this.initialDirection) * speed; // X component of direction
                     this.vy = Math.sin(this.initialDirection) * speed; // Y component of direction
-                    
-                    // Start with higher opacity to fill screen immediately
-                    this.opacity = 0.1 + Math.random() * 0.1;
-                    this.maxOpacity = 0.2 + Math.random() * 0.2;
+
+                    // Higher opacity for less translucent smoke
+                    this.opacity = 0.35 + Math.random() * 0.2; // Significantly increased initial opacity
+                    this.maxOpacity = 0.6 + Math.random() * 0.3; // Significantly increased max opacity
                     this.growing = true;
                     
                     // Choose color based on colorIndex - with fallback for safety
@@ -381,21 +388,74 @@
                 update() {
                     this.life++;
                     
+                    // Get volume boost but check if voice is active
+                    let volumeBoost = Math.min(averageVolume / 15, 5.0);
+                    
+                    // If voice is below threshold (averageVolume close to 0.1),
+                    // we should have minimal animation
+                    const isQuiet = averageVolume < VOICE_THRESHOLD + 1;
+                    
+                    // Dynamic opacity based on voice activity
+                    let dynamicMaxOpacity;
+                    if (isQuiet) {
+                        // When quiet, maintain current opacity but don't grow
+                        dynamicMaxOpacity = this.opacity;
+                    } else {
+                        // Normal behavior when voice is active
+                        dynamicMaxOpacity = Math.min(this.maxOpacity * (1 + volumeBoost * 0.6), 0.95);
+                    }
+                    
+                    // Movement multiplier based on voice
+                    let volumeMultiplier = 0.01; // Near-zero when quiet
+                    
+                    if (!isQuiet) {
+                        // Normal stepwise function when voice is active
+                        if (volumeBoost > 3.0) volumeMultiplier = 6.0;      // Very loud - dramatic movement
+                        else if (volumeBoost > 2.0) volumeMultiplier = 4.0; // Loud - strong movement
+                        else if (volumeBoost > 1.0) volumeMultiplier = 2.5; // Medium - moderate movement
+                        else volumeMultiplier = 1.0;                        // Soft voice - normal movement
+                    }
+                    
+                    // Expansion rate is near zero when quiet
+                    const baseExpansionRate = isQuiet ? 0.002 : 0.05;
+                    const dynamicExpansionRate = (baseExpansionRate + Math.abs(this.vx + this.vy) * 0.1) * 
+                                               (1 + volumeBoost * volumeMultiplier);
+
                     // Handle opacity
                     if (this.growing) {
-                        this.opacity += 0.005;
-                        if (this.opacity >= this.maxOpacity) {
-                            this.opacity = this.maxOpacity;
+                        this.opacity += 0.005 * (1 + volumeBoost * 0.2); // Faster growth with volume
+                        if (this.opacity >= dynamicMaxOpacity) {
+                            this.opacity = dynamicMaxOpacity;
                             this.growing = false;
                         }
                     } else if (this.life > this.maxLife * 0.7) {
-                        this.opacity -= 0.002;
+                        this.opacity -= 0.002 * (1 + volumeBoost * 0.1); // Faster fade with volume
                     }
                     
-                    // Movement - reduced wind strength for less overall movement
-                    const windStrength = 0.05; // Significantly reduced
-                    const windDirection = Math.sin(windTime + this.x * 0.005) * windStrength;
-                    const verticalWind = Math.cos(windTime * 0.4 + this.y * 0.004) * windStrength * 0.2;
+                    // Wind strength near zero when quiet
+                    const baseWindStrength = isQuiet ? 0.001 : 0.08;
+                    
+                    // Create abrupt changes in wind strength based on volume thresholds
+                    let windVolumeMultiplier = isQuiet ? 0.01 : 1.0;
+                    
+                    if (!isQuiet) {
+                        if (volumeBoost > 3.0) {
+                            // Very loud sounds create sudden, dramatic movements
+                            windVolumeMultiplier = 12.0;
+                            // Add random direction changes for "excited" movement
+                            if (Math.random() < 0.15) {
+                                this.initialDirection = Math.random() * Math.PI * 2;
+                            }
+                        } else if (volumeBoost > 2.0) {
+                            windVolumeMultiplier = 8.0;
+                        } else if (volumeBoost > 1.0) {
+                            windVolumeMultiplier = 5.0;
+                        }
+                    }
+                    
+                    const dynamicWindStrength = baseWindStrength * (1 + volumeBoost * windVolumeMultiplier);
+                    const windDirection = Math.sin(windTime + this.x * 0.005) * dynamicWindStrength;
+                    const verticalWind = Math.cos(windTime * 0.4 + this.y * 0.004) * dynamicWindStrength * 0.5;
                     
                     // Add some drift based on position to create mixing
                     const centerInfluence = 0.001;
@@ -408,9 +468,16 @@
                     this.vx += windDirection * 0.1; // Reduced wind effect
                     this.vy += verticalWind * 0.1;
                     
-                    // Small random movement variation
-                    this.vx += (Math.random() - 0.5) * 0.03;
-                    this.vy += (Math.random() - 0.5) * 0.03;
+                    // Small random movement variation - drastically reduced when quiet
+                    if (isQuiet) {
+                        // Near-zero random variation when quiet
+                        this.vx += (Math.random() - 0.5) * 0.0005;
+                        this.vy += (Math.random() - 0.5) * 0.0005;
+                    } else {
+                        // Normal random variation when voice is active
+                        this.vx += (Math.random() - 0.5) * 0.03;
+                        this.vy += (Math.random() - 0.5) * 0.03;
+                    }
                     
                     // Occasionally change direction slightly for more random movement
                     if (Math.random() < 0.01) { // 1% chance each frame
@@ -424,19 +491,29 @@
                         this.vy = Math.sin(newAngle) * currentSpeed;
                     }
                     
-                    // Apply strong viscosity for very slow movement
-                    this.vx *= 0.98;
-                    this.vy *= 0.98;
+                    // Apply viscosity - stronger when quiet to quickly stop movement
+                    if (isQuiet) {
+                        this.vx *= 0.9; // Much stronger damping when quiet
+                        this.vy *= 0.9;
+                    } else {
+                        this.vx *= 0.98;
+                        this.vy *= 0.98;
+                    }
                     
-                    // Apply velocity
-                    this.x += this.vx;
-                    this.y += this.vy;
+                    // Apply velocity only if not in quiet mode
+                    if (!isQuiet) {
+                        this.x += this.vx;
+                        this.y += this.vy;
+                    } else {
+                        // Extremely minimal movement when quiet for slight "floating" appearance
+                        this.x += this.vx * 0.01;
+                        this.y += this.vy * 0.01;
+                    }
                     
-                    // Reduced expansion rate
-                    const expansionRate = 0.05 + Math.abs(windDirection) * 0.1;
-                    this.radius += expansionRate;
+                    // Apply dynamic expansion rate
+                    this.radius += dynamicExpansionRate;
                     
-                    // Handle collisions with other particles (viscous mixing)
+                    // Handle collisions with other particles (viscous mixing) - faster mixing with volume
                     for (let other of particles) {
                         if (other !== this) {
                             const dx = other.x - this.x;
@@ -460,14 +537,31 @@
                                     
                                     // Only blend if both colors are valid
                                     if (otherColor && this.color) {
-                                        // Blend colors gradually
-                                        for (let i = 0; i < 3; i++) {
-                                            this.color[i] = this.color[i] * 0.99 + otherColor[i] * 0.01;
+                                        // Blend colors based on voice activity
+                                        const isQuiet = averageVolume < VOICE_THRESHOLD + 1;
+                                        const blendRate = isQuiet ? 0.001 : 0.02 * (1 + volumeBoost * 5.0);
+                                        
+                                        if (isQuiet) {
+                                            // Minimal color blending when quiet
+                                            for (let i = 0; i < 3; i++) {
+                                                this.color[i] = this.color[i] * 0.9995 + otherColor[i] * 0.0005;
+                                            }
+                                        } else if (volumeBoost > 2.5) {
+                                            // Dramatic color shift - more sudden changes
+                                            for (let i = 0; i < 3; i++) {
+                                                // More weighted toward the other color for dramatic shifts
+                                                this.color[i] = this.color[i] * (1 - blendRate * 1.5) + otherColor[i] * blendRate * 1.5;
+                                            }
+                                        } else {
+                                            // Normal blending
+                                            for (let i = 0; i < 3; i++) {
+                                                this.color[i] = this.color[i] * (1 - blendRate) + otherColor[i] * blendRate;
+                                            }
                                         }
                                     }
                                 }
                                 
-                                // Repulsion (viscous push)
+                                // Repulsion (viscous push) - stronger push with volume? (optional)
                                 let repulsion = 0.02; // Original repulsion force
                                 // New colors have slightly different repulsion force
                                 if (this.colorIndex >= 2 || other.colorIndex >= 2) {
@@ -481,8 +575,9 @@
                         }
                     }
                     
-                    // Reset when faded or at end of life
-                    if (this.opacity <= 0 || this.life >= this.maxLife) {
+                    // Reset when faded or at end of life - potentially reset faster with volume?
+                    const dynamicMaxLife = this.maxLife * (1 - volumeBoost * 0.1); // Shorter life with high volume
+                    if (this.opacity <= 0 || this.life >= dynamicMaxLife) {
                         this.reset(this.colorIndex);
                     } else {
                         // Calculate next position
@@ -562,10 +657,12 @@
                     );
                     
                     const [r, g, b] = this.color;
-                    gradient.addColorStop(0, `rgba(${r}, ${g}, ${b}, ${this.opacity})`);
-                    gradient.addColorStop(0.7, `rgba(${r}, ${g}, ${b}, ${this.opacity * 0.5})`);
+                    // Significantly reduced transparency in gradient
+                    gradient.addColorStop(0, `rgba(${r}, ${g}, ${b}, ${this.opacity * 1.5})`); // Stronger center opacity
+                    gradient.addColorStop(0.4, `rgba(${r}, ${g}, ${b}, ${this.opacity * 1.0})`); // Much less transparent middle
+                    gradient.addColorStop(0.7, `rgba(${r}, ${g}, ${b}, ${this.opacity * 0.5})`); // Gradual fade
                     gradient.addColorStop(1, `rgba(${r}, ${g}, ${b}, 0)`);
-                    
+
                     ctx.fillStyle = gradient;
                     ctx.beginPath();
                     ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
@@ -616,6 +713,113 @@
                     }
                 }, animationConfig.duration + 500);
             }
+
+            // Setup Web Audio API for microphone input with better speech response
+            async function setupAudio() {
+                if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+                    console.error('getUserMedia not supported on your browser!');
+                    alert('Microphone access is not supported by your browser.');
+                    return;
+                }
+
+                try {
+                    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                    audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                    analyser = audioContext.createAnalyser();
+
+                    // Configure analyser for better speech response
+                    analyser.fftSize = 512; // Increased for better frequency resolution
+                    analyser.smoothingTimeConstant = 0.3; // Lower value for faster response to changes
+                    
+                    const bufferLength = analyser.frequencyBinCount;
+                    dataArray = new Uint8Array(bufferLength);
+
+                    // Create a filter to emphasize speech frequencies
+                    const filter = audioContext.createBiquadFilter();
+                    filter.type = "bandpass";
+                    filter.frequency.value = 1000; // Center on typical speech frequencies
+                    filter.Q.value = 0.5; // Wider bandwidth to catch all speech
+
+                    // Connect microphone stream to filter then analyser
+                    const source = audioContext.createMediaStreamSource(stream);
+                    source.connect(filter);
+                    filter.connect(analyser);
+                    // We don't need to connect to destination unless we want to hear the mic
+
+                    micInitialized = true;
+                    console.log("Microphone access granted and audio analyser set up.");
+
+                    // Update instructions
+                    instructions.innerHTML += '<br>• Audio Reactive! (Speak to intensify)';
+
+                } catch (err) {
+                    console.error(`Error accessing microphone: ${err}`);
+                    alert(`Could not access microphone: ${err.message}. Audio reactivity disabled.`);
+                }
+            }
+
+            // Function to get average volume from analyser
+            // Voice activity detection constants
+            const VOICE_THRESHOLD = 10; // Minimum volume to consider as active voice
+            const MIN_VOICE_DURATION = 300; // ms to consider voice as stable
+            let lastVoiceTime = 0;
+            let isVoiceActive = false;
+            
+            function getAverageVolume() {
+                if (!micInitialized || !analyser || !dataArray) return 0;
+
+                analyser.getByteFrequencyData(dataArray); // Use frequency data as proxy for volume
+
+                // Focus more on higher frequencies where speech is more prominent
+                let sum = 0;
+                let weightedCount = 0;
+                
+                for (let i = 0; i < dataArray.length; i++) {
+                    // Apply higher weight to speech frequencies (typically 85-255Hz and 2-4kHz)
+                    let weight = 1.0;
+                    
+                    // Weight middle frequencies higher for better speech response
+                    // This is a simplified approach - real implementation would use proper frequency bins
+                    if (i > dataArray.length * 0.2 && i < dataArray.length * 0.7) {
+                        weight = 2.0; // Double the importance of speech frequency ranges
+                    }
+                    
+                    sum += dataArray[i] * weight;
+                    weightedCount += weight;
+                }
+                
+                // Calculate raw volume
+                const newVolume = sum / weightedCount;
+                
+                // Voice activity detection
+                const now = Date.now();
+                if (newVolume > VOICE_THRESHOLD) {
+                    lastVoiceTime = now;
+                    isVoiceActive = true;
+                } else if (now - lastVoiceTime > MIN_VOICE_DURATION) {
+                    isVoiceActive = false;
+                }
+                
+                // If voice is not active, return near-zero value to freeze animation
+                if (!isVoiceActive) {
+                    return 0.1; // Just above zero to maintain minimal movement
+                }
+                
+                // If the new volume is significantly higher, respond immediately for abrupt changes
+                // Otherwise, use a bit of smoothing
+                if (newVolume > averageVolume * 1.5) {
+                    return newVolume; // Immediate response to large increases
+                } else {
+                    return averageVolume * 0.7 + newVolume * 0.3; // Some smoothing for decreases
+                }
+            }
+
+            // Global variable for pulse effect
+            let pulseEffect = {
+                active: false,
+                intensity: 0,
+                decay: 0.1
+            };
             
             // Animation loop
             function animate(currentTime) {
@@ -625,7 +829,35 @@
                 const elapsed = currentTime - lastTime;
                 if (elapsed < interval) return;
                 lastTime = currentTime - (elapsed % interval);
+
+                // Get audio volume
+                const prevVolume = averageVolume;
+                averageVolume = getAverageVolume();
                 
+                // Update wind time based on voice activity - almost freeze when quiet
+                const isQuiet = averageVolume < VOICE_THRESHOLD + 1;
+                if (isQuiet) {
+                    windTime += windChangeRate * 0.01; // Extremely slow wind change when quiet
+                } else {
+                    windTime += windChangeRate * 0.6;  // Normal wind change when voice active
+                }
+                
+                // Detect significant volume increases for pulse effect
+                if (averageVolume > prevVolume * 1.7 && averageVolume > 20) {
+                    // Trigger pulse effect on sudden loud sounds
+                    pulseEffect.active = true;
+                    pulseEffect.intensity = Math.min(1.0, averageVolume / 100); // Cap at 1.0
+                }
+                
+                // Handle pulse effect decay
+                if (pulseEffect.active) {
+                    pulseEffect.intensity -= pulseEffect.decay;
+                    if (pulseEffect.intensity <= 0) {
+                        pulseEffect.active = false;
+                        pulseEffect.intensity = 0;
+                    }
+                }
+
                 // During animation, we might need to clear particles that get stuck outside
                 // the container as it shrinks
                 if (!animationConfig.complete && animationConfig.progress > 0.1) {
@@ -652,8 +884,17 @@
                     containerPath = createAnimatedContainer();
                 } else {
                     // After animation completes, use less aggressive clearing
-                    ctx.fillStyle = 'rgba(17, 17, 17, 0.01)';
-                    ctx.fillRect(0, 0, canvas.width, canvas.height);
+                    // Apply pulse effect to background if active
+                    if (pulseEffect.active) {
+                        // Create a pulsing background based on volume
+                        const baseColor = 17; // Dark gray
+                        const pulseColor = Math.min(50, baseColor + Math.floor(pulseEffect.intensity * 40));
+                        ctx.fillStyle = `rgba(${pulseColor}, ${pulseColor}, ${pulseColor}, 0.08)`;
+                        ctx.fillRect(0, 0, canvas.width, canvas.height);
+                    } else {
+                        ctx.fillStyle = 'rgba(17, 17, 17, 0.01)';
+                        ctx.fillRect(0, 0, canvas.width, canvas.height);
+                    }
                 }
                 
                 // Draw container boundary
@@ -769,7 +1010,8 @@
                 }
             };
             
-            // Start animation
+            // Start animation and audio setup
+            setupAudio(); // Request mic access
             init();
             animate(0);
             
@@ -1104,7 +1346,10 @@
                 <strong>Smoke Container:</strong><br>
                 • Animating to Gaussian curve top<br>
                 • Final border at 1/3 from top<br>
-                • Click inside to disturb smoke
+                • Click inside to disturb smoke<br>
+                • <b>Speak into microphone to activate!</b><br>
+                • Animation freezes when quiet<br>
+                • Louder speech = more dramatic movement
             `;
             
             document.getElementById('container').appendChild(instructions);
