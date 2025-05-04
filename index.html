@@ -285,6 +285,47 @@
                 }
             }
             
+            // Post-processing to increase color intensity and reduce translucency
+            function enhanceColors(ctx, width, height) {
+                // Skip color processing when performance is critical
+                const isQuiet = averageVolume < VOICE_THRESHOLD + 1;
+                if (!isQuiet && Math.random() < 0.2) { // Only process occasionally when active (performance)
+                    try {
+                        // Get canvas image data
+                        const imageData = ctx.getImageData(0, 0, width, height);
+                        const data = imageData.data;
+                        
+                        // Process every pixel (performance intensive)
+                        for (let i = 0; i < data.length; i += 4) {
+                            // Only process pixels that have some opacity
+                            if (data[i+3] > 10) { 
+                                // Boost saturation slightly
+                                const r = data[i];
+                                const g = data[i+1];
+                                const b = data[i+2];
+                                const max = Math.max(r, g, b);
+                                
+                                if (max > 0) {
+                                    // Increase opacity for more solid appearance
+                                    data[i+3] = Math.min(255, data[i+3] * 1.15);
+                                    
+                                    // Boost color slightly for more vibrant look
+                                    data[i] = Math.min(255, r * 1.05);
+                                    data[i+1] = Math.min(255, g * 1.05);
+                                    data[i+2] = Math.min(255, b * 1.05);
+                                }
+                            }
+                        }
+                        
+                        // Put the image data back
+                        ctx.putImageData(imageData, 0, 0);
+                    } catch (e) {
+                        // Safely ignore any errors in color processing
+                        console.log("Color processing error:", e);
+                    }
+                }
+            }
+            
             // Generate the initial container path
             let containerPath = createAnimatedContainer();
             
@@ -292,11 +333,11 @@
             const particles = [];
             const particleCount = Math.floor((window.innerWidth * window.innerHeight) / 3000); // Reduced particle count for better performance
             
-            // Colors for the four smokes - increased saturation for less translucent appearance
-            const color1 = [86, 195, 255];   // Blue - brighter
-            const color2 = [255, 95, 60];    // Red-orange - more intense
-            const color3 = [130, 255, 90];   // Green - more vivid
-            const color4 = [255, 200, 40];   // Yellow-gold - brighter
+            // Colors for the four smokes - even more vibrant for more solid appearance
+            const color1 = [100, 210, 255];   // Blue - more vibrant
+            const color2 = [255, 105, 70];    // Red-orange - more saturated
+            const color3 = [140, 255, 100];   // Green - more intense
+            const color4 = [255, 220, 50];    // Yellow-gold - more saturated
             
             // Animation timing - ensure consistent frame rate
             let lastTime = 0;
@@ -362,9 +403,9 @@
                     this.vx = Math.cos(this.initialDirection) * speed; // X component of direction
                     this.vy = Math.sin(this.initialDirection) * speed; // Y component of direction
 
-                    // Higher opacity for less translucent smoke
-                    this.opacity = 0.35 + Math.random() * 0.2; // Significantly increased initial opacity
-                    this.maxOpacity = 0.6 + Math.random() * 0.3; // Significantly increased max opacity
+                    // Even higher opacity for nearly solid smoke
+                    this.opacity = 0.6 + Math.random() * 0.2; // Dramatically increased initial opacity
+                    this.maxOpacity = 0.8 + Math.random() * 0.15; // Nearly solid max opacity
                     this.growing = true;
                     
                     // Choose color based on colorIndex - with fallback for safety
@@ -395,14 +436,14 @@
                     // we should have minimal animation
                     const isQuiet = averageVolume < VOICE_THRESHOLD + 1;
                     
-                    // Dynamic opacity based on voice activity
+                    // Dynamic opacity based on voice activity - less transparency
                     let dynamicMaxOpacity;
                     if (isQuiet) {
                         // When quiet, maintain current opacity but don't grow
                         dynamicMaxOpacity = this.opacity;
                     } else {
-                        // Normal behavior when voice is active
-                        dynamicMaxOpacity = Math.min(this.maxOpacity * (1 + volumeBoost * 0.6), 0.95);
+                        // Normal behavior when voice is active - even higher max opacity
+                        dynamicMaxOpacity = Math.min(this.maxOpacity * (1 + volumeBoost * 0.6), 0.98);
                     }
                     
                     // Movement multiplier based on voice
@@ -578,7 +619,15 @@
                     // Reset when faded or at end of life - potentially reset faster with volume?
                     const dynamicMaxLife = this.maxLife * (1 - volumeBoost * 0.1); // Shorter life with high volume
                     if (this.opacity <= 0 || this.life >= dynamicMaxLife) {
-                        this.reset(this.colorIndex);
+                        // Keep original color index when resetting for color continuity
+                        const originalColorIndex = this.colorIndex;
+                        this.reset(originalColorIndex);
+                        
+                        // When resetting during active voice, ensure high opacity immediately
+                        if (!isQuiet && averageVolume > VOICE_THRESHOLD + 10) {
+                            this.opacity = Math.min(0.9, this.maxOpacity * 0.9); // Start with higher opacity during active speech
+                            this.growing = false; // Skip growth phase during active speech
+                        }
                     } else {
                         // Calculate next position
                         const nextX = this.x + this.vx;
@@ -657,10 +706,11 @@
                     );
                     
                     const [r, g, b] = this.color;
-                    // Significantly reduced transparency in gradient
-                    gradient.addColorStop(0, `rgba(${r}, ${g}, ${b}, ${this.opacity * 1.5})`); // Stronger center opacity
-                    gradient.addColorStop(0.4, `rgba(${r}, ${g}, ${b}, ${this.opacity * 1.0})`); // Much less transparent middle
-                    gradient.addColorStop(0.7, `rgba(${r}, ${g}, ${b}, ${this.opacity * 0.5})`); // Gradual fade
+                    // Almost solid colors with minimal transparency in gradient
+                    gradient.addColorStop(0, `rgba(${r}, ${g}, ${b}, ${Math.min(1.0, this.opacity * 1.7)})`); // Nearly solid center
+                    gradient.addColorStop(0.3, `rgba(${r}, ${g}, ${b}, ${Math.min(0.95, this.opacity * 1.5)})`); // Very opaque inner area
+                    gradient.addColorStop(0.6, `rgba(${r}, ${g}, ${b}, ${this.opacity * 0.8})`); // Less transparent middle
+                    gradient.addColorStop(0.85, `rgba(${r}, ${g}, ${b}, ${this.opacity * 0.4})`); // More gradual fade at edge
                     gradient.addColorStop(1, `rgba(${r}, ${g}, ${b}, 0)`);
 
                     ctx.fillStyle = gradient;
@@ -883,16 +933,21 @@
                     // Update container path during animation
                     containerPath = createAnimatedContainer();
                 } else {
-                    // After animation completes, use less aggressive clearing
+                    // After animation completes, use more aggressive clearing for better color definition
                     // Apply pulse effect to background if active
                     if (pulseEffect.active) {
                         // Create a pulsing background based on volume
                         const baseColor = 17; // Dark gray
                         const pulseColor = Math.min(50, baseColor + Math.floor(pulseEffect.intensity * 40));
-                        ctx.fillStyle = `rgba(${pulseColor}, ${pulseColor}, ${pulseColor}, 0.08)`;
+                        ctx.fillStyle = `rgba(${pulseColor}, ${pulseColor}, ${pulseColor}, 0.15)`;
                         ctx.fillRect(0, 0, canvas.width, canvas.height);
                     } else {
-                        ctx.fillStyle = 'rgba(17, 17, 17, 0.01)';
+                        // More clearing for sharper, less translucent appearance of new particles
+                        const isQuiet = averageVolume < VOICE_THRESHOLD + 1;
+                        // When quiet, clear very little to maintain stable image
+                        // When active, clear more to allow fresh colors to dominate
+                        const clearAmount = isQuiet ? 0.005 : 0.03;
+                        ctx.fillStyle = `rgba(17, 17, 17, ${clearAmount})`;
                         ctx.fillRect(0, 0, canvas.width, canvas.height);
                     }
                 }
@@ -914,6 +969,9 @@
                         particle.draw();
                     }
                 }
+                
+                // Apply color enhancement for less translucency
+                enhanceColors(ctx, canvas.width, canvas.height);
             }
             
             // Create a public API for controlling the smoke container
