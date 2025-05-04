@@ -56,12 +56,100 @@
             
             // Container configuration
             const containerConfig = {
-                shape: 'roundedRect', // Options: 'roundedRect', 'circle', 'ellipse', 'polygon', 'wave', 'custom'
+                shape: 'custom',
                 animationTime: 0,
                 animationSpeed: 0.001,
                 padding: 50,
-                customPathFunction: null // Function that returns a Path2D object
+                customPathFunction: createAnimatedContainer
             };
+            
+            // Animation state - simplified to avoid performance issues
+            const animationConfig = {
+                startTime: Date.now(),
+                duration: 3000, // Shorter animation duration in ms
+                progress: 0,
+                complete: false
+            };
+            
+            // Function to create container that animates from full screen to gaussian top with bottom at 1/3
+            function createAnimatedContainer() {
+                const path = new Path2D();
+                const width = canvas.width;
+                const height = canvas.height;
+                
+                // Calculate animation progress
+                if (!animationConfig.complete) {
+                    const elapsed = Date.now() - animationConfig.startTime;
+                    animationConfig.progress = Math.min(elapsed / animationConfig.duration, 1);
+                    
+                    // Simple easing function (cubic ease out)
+                    const easedProgress = 1 - Math.pow(1 - animationConfig.progress, 3);
+                    
+                    if (animationConfig.progress >= 1) {
+                        animationConfig.complete = true;
+                    }
+                    
+                    // Animate bottom border from bottom of screen to 1/3 from top
+                    const startBottomY = height;
+                    const endBottomY = height / 3;
+                    const currentBottomY = startBottomY - (startBottomY - endBottomY) * easedProgress;
+                    
+                    // Start from bottom left corner
+                    path.moveTo(0, currentBottomY);
+                    
+                    // Draw bottom line to bottom right
+                    path.lineTo(width, currentBottomY);
+                    
+                    // Create the gaussian curve for the top boundary, with fewer points to improve performance
+                    const gaussianPoints = 50; // Reduced number of points for better performance
+                    const maxAmplitude = endBottomY * 0.8; // Final height of the gaussian curve
+                    const currentAmplitude = maxAmplitude * easedProgress; // Amplitude increases with animation
+                    const mean = width / 2; // Center of the curve
+                    const stdDev = width / 6; // Width of the curve
+                    
+                    // Draw the gaussian curve from right to left
+                    for (let i = gaussianPoints; i >= 0; i--) {
+                        const x = width * (i / gaussianPoints);
+                        // Gaussian function with increasing amplitude
+                        const gaussianY = currentAmplitude * Math.exp(-Math.pow(x - mean, 2) / (2 * Math.pow(stdDev, 2)));
+                        // Invert Y (lower Y is higher on canvas)
+                        const y = currentBottomY - gaussianY;
+                        
+                        path.lineTo(x, y);
+                    }
+                } else {
+                    // Animation complete, use final shape
+                    
+                    // Bottom line at 1/3 from top
+                    const bottomY = height / 3;
+                    
+                    // Start from bottom left corner
+                    path.moveTo(0, bottomY);
+                    
+                    // Draw bottom line to bottom right
+                    path.lineTo(width, bottomY);
+                    
+                    // Create the gaussian curve for the top boundary with fewer points
+                    const gaussianPoints = 50; // Reduced for performance
+                    const amplitude = bottomY * 0.8; // Height of the gaussian curve
+                    const mean = width / 2; // Center of the curve
+                    const stdDev = width / 6; // Width of the curve
+                    
+                    // Draw the gaussian curve from right to left
+                    for (let i = gaussianPoints; i >= 0; i--) {
+                        const x = width * (i / gaussianPoints);
+                        // Gaussian function: y = amplitude * e^(-(x-mean)²/(2*stdDev²))
+                        const gaussianY = amplitude * Math.exp(-Math.pow(x - mean, 2) / (2 * Math.pow(stdDev, 2)));
+                        // Invert Y (lower Y is higher on canvas)
+                        const y = bottomY - gaussianY;
+                        
+                        path.lineTo(x, y);
+                    }
+                }
+                
+                path.closePath();
+                return path;
+            }
             
             // Example of a custom path function - can be replaced with any function that returns a Path2D
             function starShape() {
@@ -186,15 +274,23 @@
             
             // Function to check if a point is inside the container path
             function isPointInContainer(x, y, path) {
-                return ctx.isPointInPath(path, x, y);
+                // Make sure we have a valid path before checking
+                if (!path) return true; // Default to true if no path exists yet
+                
+                try {
+                    return ctx.isPointInPath(path, x, y);
+                } catch (e) {
+                    // If there's an error (invalid path), return true as fallback
+                    return true;
+                }
             }
             
             // Generate the initial container path
-            let containerPath = generateContainerPath();
+            let containerPath = createAnimatedContainer();
             
-            // Smoke particles - increased density for fuller coverage with slower particles
+            // Smoke particles - optimized count for better performance
             const particles = [];
-            const particleCount = Math.floor((window.innerWidth * window.innerHeight) / 1500); // More particles for better coverage
+            const particleCount = Math.floor((window.innerWidth * window.innerHeight) / 3000); // Reduced particle count for better performance
             
             // Colors for the four smokes
             const color1 = [76, 175, 240];   // Blue
@@ -202,14 +298,14 @@
             const color3 = [120, 220, 80];   // Green
             const color4 = [220, 180, 30];   // Yellow-gold
             
-            // Animation timing
+            // Animation timing - ensure consistent frame rate
             let lastTime = 0;
-            const fps = 60;
+            const fps = 30; // Reduced FPS for better performance
             const interval = 1000 / fps;
             
             // Reduced wind influence to support more random movement
             let windTime = 0;
-            const windChangeRate = 0.001; // Even slower change for subtlety
+            const windChangeRate = 0.0005; // Even slower change for better performance
             
             // Particle class
             class SmokeParticle {
@@ -221,9 +317,32 @@
                     // Store color index (0-3)
                     this.colorIndex = colorIndex;
                     
-                    // Position particles randomly across the entire screen
-                    this.x = Math.random() * canvas.width;
-                    this.y = Math.random() * canvas.height;
+                    // Position particles within container bounds when possible
+                    let validPosition = false;
+                    let attempts = 0;
+                    const maxAttempts = 10;
+                    
+                    // Try to find a position inside the container
+                    while (!validPosition && attempts < maxAttempts) {
+                        this.x = Math.random() * canvas.width;
+                        this.y = Math.random() * canvas.height;
+                        
+                        // If we have a valid container path, check if point is inside
+                        if (containerPath) {
+                            validPosition = isPointInContainer(this.x, this.y, containerPath);
+                        } else {
+                            // If no container path yet, accept any position
+                            validPosition = true;
+                        }
+                        
+                        attempts++;
+                    }
+                    
+                    // If still not valid after max attempts, position safely in middle area
+                    if (!validPosition) {
+                        this.x = canvas.width / 2 + (Math.random() - 0.5) * canvas.width / 4;
+                        this.y = canvas.height / 4 + Math.random() * (canvas.height / 4);
+                    }
                     
                     // Random initial direction instead of inward movement
                     this.initialDirection = Math.random() * Math.PI * 2; // Random angle in radians
@@ -365,11 +484,6 @@
                     // Reset when faded or at end of life
                     if (this.opacity <= 0 || this.life >= this.maxLife) {
                         this.reset(this.colorIndex);
-                        // Ensure new particle starts inside the container
-                        while (!isPointInContainer(this.x, this.y, containerPath)) {
-                            this.x = Math.random() * canvas.width;
-                            this.y = Math.random() * canvas.height;
-                        }
                     } else {
                         // Calculate next position
                         const nextX = this.x + this.vx;
@@ -436,7 +550,10 @@
                     ctx.save();
                     
                     // Clip to container path so smoke isn't rendered outside the boundary
-                    ctx.clip(containerPath);
+                    // Only clip if we have a valid path
+                    if (containerPath) {
+                        ctx.clip(containerPath);
+                    }
                     
                     // Create gradient for smooth edges
                     const gradient = ctx.createRadialGradient(
@@ -459,20 +576,45 @@
                 }
             }
             
-            // Initialize particles
+            // Initialize particles with performance optimizations
             function init() {
-                for (let i = 0; i < particleCount; i++) {
+                // Start with fewer particles during animation
+                const initialParticleCount = Math.floor(particleCount * 0.5);
+                
+                for (let i = 0; i < initialParticleCount; i++) {
                     // Create particles of all four colors, evenly distributed
                     const particle = new SmokeParticle(i % 4);
                     
                     // Ensure particles start inside the container
-                    while (!isPointInContainer(particle.x, particle.y, containerPath)) {
+                    let attempts = 0;
+                    const maxAttempts = 5;
+                    while (!isPointInContainer(particle.x, particle.y, containerPath) && attempts < maxAttempts) {
                         particle.x = Math.random() * canvas.width;
                         particle.y = Math.random() * canvas.height;
+                        attempts++;
                     }
                     
                     particles.push(particle);
                 }
+                
+                // Schedule adding the rest of the particles after animation completes
+                setTimeout(() => {
+                    const remainingCount = particleCount - initialParticleCount;
+                    for (let i = 0; i < remainingCount; i++) {
+                        const particle = new SmokeParticle(i % 4);
+                        
+                        // Ensure particles start inside the container
+                        let attempts = 0;
+                        const maxAttempts = 5;
+                        while (!isPointInContainer(particle.x, particle.y, containerPath) && attempts < maxAttempts) {
+                            particle.x = Math.random() * canvas.width;
+                            particle.y = Math.random() * canvas.height;
+                            attempts++;
+                        }
+                        
+                        particles.push(particle);
+                    }
+                }, animationConfig.duration + 500);
             }
             
             // Animation loop
@@ -484,39 +626,53 @@
                 if (elapsed < interval) return;
                 lastTime = currentTime - (elapsed % interval);
                 
+                // During animation, we might need to clear particles that get stuck outside
+                // the container as it shrinks
+                if (!animationConfig.complete && animationConfig.progress > 0.1) {
+                    // Every few frames, check if particles are inside the container
+                    if (Math.random() < 0.1) { // 10% chance each frame
+                        particles.forEach(particle => {
+                            if (!isPointInContainer(particle.x, particle.y, containerPath)) {
+                                particle.opacity = Math.max(0, particle.opacity - 0.05);
+                            }
+                        });
+                    }
+                }
+                
                 // Reduced wind time rate for slower changes
                 windTime += windChangeRate * 0.6;
                 
-                // Reduced clearing rate for more persistent smoke effect
-                ctx.fillStyle = 'rgba(17, 17, 17, 0.01)'; // Less clearing for more density
-                ctx.fillRect(0, 0, canvas.width, canvas.height);
+                // Clear differently based on animation state
+                if (!animationConfig.complete) {
+                    // During animation, clear more aggressively to prevent halos
+                    ctx.fillStyle = 'rgba(17, 17, 17, 0.3)'; 
+                    ctx.fillRect(0, 0, canvas.width, canvas.height);
+                    
+                    // Update container path during animation
+                    containerPath = createAnimatedContainer();
+                } else {
+                    // After animation completes, use less aggressive clearing
+                    ctx.fillStyle = 'rgba(17, 17, 17, 0.01)';
+                    ctx.fillRect(0, 0, canvas.width, canvas.height);
+                }
                 
                 // Draw container boundary
-                ctx.strokeStyle = 'rgba(100, 100, 100, 0.3)';
+                ctx.strokeStyle = 'rgba(100, 100, 100, 0.5)';
                 ctx.lineWidth = 2;
                 ctx.stroke(containerPath);
                 
-                // Draw control points overlay
-                drawControlPoints();
-                
-                // Highlight nearest segment for adding points when Alt is pressed
-                if (showControlPoints && nearestSegmentIndex >= 0) {
-                    const p1 = controlPoints[nearestSegmentIndex];
-                    const p2 = controlPoints[(nearestSegmentIndex + 1) % controlPoints.length];
+                // Update and draw particles - with performance optimizations
+                for (let i = 0; i < particles.length; i++) {
+                    const particle = particles[i];
                     
-                    ctx.strokeStyle = 'rgba(255, 255, 100, 0.8)';
-                    ctx.lineWidth = 3;
-                    ctx.beginPath();
-                    ctx.moveTo(p1.x, p1.y);
-                    ctx.lineTo(p2.x, p2.y);
-                    ctx.stroke();
+                    // During animation, skip updating some particles to improve performance
+                    if (!animationConfig.complete && i % 2 === 0) {
+                        particle.draw(); // Still draw but don't update
+                    } else {
+                        particle.update();
+                        particle.draw();
+                    }
                 }
-                
-                // Update and draw particles
-                particles.forEach(particle => {
-                    particle.update();
-                    particle.draw();
-                });
             }
             
             // Create a public API for controlling the smoke container
@@ -795,11 +951,8 @@
                 ctx.restore();
             }
             
-            // Mouse interaction variables
-            let isDragging = false;
-            let selectedPointIndex = -1;
-            let isAddingPoint = false;
-            let nearestSegmentIndex = -1;
+            // Handle mouse interaction for disturbing the smoke
+            let isMousePressed = false;
             
             // Distance from point to line segment
             function distanceToSegment(px, py, x1, y1, x2, y2) {
@@ -868,49 +1021,9 @@
                 const mouseX = e.clientX - rect.left;
                 const mouseY = e.clientY - rect.top;
                 
-                // Check if clicked on a control point
-                for (let i = 0; i < controlPoints.length; i++) {
-                    const point = controlPoints[i];
-                    const dx = point.x - mouseX;
-                    const dy = point.y - mouseY;
-                    const distance = Math.sqrt(dx * dx + dy * dy);
-                    
-                    if (distance < 10) { // Control point radius for hitbox
-                        // Start dragging this point
-                        isDragging = true;
-                        selectedPointIndex = i;
-                        point.isDragging = true;
-                        
-                        // If shift is pressed, remove point
-                        if (e.shiftKey && controlPoints.length > 3) {
-                            controlPoints.splice(i, 1);
-                            isDragging = false;
-                        }
-                        
-                        return;
-                    }
-                }
+                isMousePressed = true;
                 
-                // If Alt key is pressed, check if we're near a segment to add a point
-                if (e.altKey) {
-                    const { segmentIndex, minDistance, insertPosition } = findNearestSegment(mouseX, mouseY);
-                    
-                    if (minDistance < 20) { // Distance threshold for adding points
-                        // Add a new point at this position
-                        controlPoints.splice(insertPosition, 0, {
-                            x: mouseX,
-                            y: mouseY,
-                            isDragging: true
-                        });
-                        
-                        // Start dragging the new point
-                        isDragging = true;
-                        selectedPointIndex = insertPosition;
-                        return;
-                    }
-                }
-                
-                // If we're inside the container, create a disturbance
+                // Create a disturbance if inside the container
                 if (isPointInContainer(mouseX, mouseY, containerPath)) {
                     particles.forEach(particle => {
                         const dx = particle.x - mouseX;
@@ -929,130 +1042,46 @@
             });
             
             canvas.addEventListener('mousemove', function(e) {
+                if (!isMousePressed) return;
+                
                 const rect = canvas.getBoundingClientRect();
                 const mouseX = e.clientX - rect.left;
                 const mouseY = e.clientY - rect.top;
                 
-                // Highlight the nearest segment when Alt is pressed (for adding points)
-                if (e.altKey) {
-                    const { segmentIndex, minDistance } = findNearestSegment(mouseX, mouseY);
-                    
-                    if (minDistance < 20) { // Distance threshold for highlighting
-                        nearestSegmentIndex = segmentIndex;
-                    } else {
-                        nearestSegmentIndex = -1;
-                    }
-                } else {
-                    nearestSegmentIndex = -1;
-                }
-                
-                // If dragging a control point, update its position
-                if (isDragging && selectedPointIndex >= 0 && selectedPointIndex < controlPoints.length) {
-                    controlPoints[selectedPointIndex].x = mouseX;
-                    controlPoints[selectedPointIndex].y = mouseY;
-                    
-                    // Update the container path
-                    containerPath = generatePathFromControlPoints();
-                    
-                    // Reset particles that are now outside the container
+                // Continue disturbance if mouse is pressed and inside container
+                if (isPointInContainer(mouseX, mouseY, containerPath)) {
                     particles.forEach(particle => {
-                        if (!isPointInContainer(particle.x, particle.y, containerPath)) {
-                            particle.reset(particle.colorIndex);
-                            
-                            // Ensure new particle starts inside the container
-                            while (!isPointInContainer(particle.x, particle.y, containerPath)) {
-                                particle.x = Math.random() * canvas.width;
-                                particle.y = Math.random() * canvas.height;
-                            }
+                        const dx = particle.x - mouseX;
+                        const dy = particle.y - mouseY;
+                        const distance = Math.sqrt(dx * dx + dy * dy);
+                        const maxDistance = 150;
+                        
+                        if (distance < maxDistance) {
+                            const force = 1.5 * (1 - distance / maxDistance);
+                            const angle = Math.atan2(dy, dx);
+                            particle.vx += Math.cos(angle) * force;
+                            particle.vy += Math.sin(angle) * force;
                         }
                     });
                 }
             });
             
             canvas.addEventListener('mouseup', function() {
-                // Stop dragging
-                if (isDragging && selectedPointIndex >= 0 && selectedPointIndex < controlPoints.length) {
-                    controlPoints[selectedPointIndex].isDragging = false;
-                }
-                
-                isDragging = false;
-                selectedPointIndex = -1;
+                isMousePressed = false;
             });
             
-            // Add keyboard shortcuts
-            document.addEventListener('keydown', function(e) {
-                // 'R' key - Reset to circular shape
-                if (e.key.toLowerCase() === 'r') {
-                    controlPoints.length = 0; // Clear existing points
-                    
-                    // Recreate circular points
-                    for (let i = 0; i < numInitialPoints; i++) {
-                        const angle = (i / numInitialPoints) * Math.PI * 2;
-                        const radius = Math.min(canvas.width, canvas.height) / 3;
-                        const x = canvas.width / 2 + Math.cos(angle) * radius;
-                        const y = canvas.height / 2 + Math.sin(angle) * radius;
-                        controlPoints.push({ x, y, isDragging: false });
-                    }
-                    
-                    containerPath = generatePathFromControlPoints();
-                }
+            // Handle window resize
+            window.addEventListener('resize', function() {
+                canvas.width = window.innerWidth;
+                canvas.height = window.innerHeight;
+                // Update container path when window is resized
+                containerPath = createAnimatedContainer();
                 
-                // 'C' key - Add more control points for finer control
-                if (e.key.toLowerCase() === 'c') {
-                    const newPoints = [];
-                    
-                    // Add a new point between each existing pair
-                    for (let i = 0; i < controlPoints.length; i++) {
-                        const current = controlPoints[i];
-                        const next = controlPoints[(i + 1) % controlPoints.length];
-                        
-                        newPoints.push(current);
-                        newPoints.push({
-                            x: (current.x + next.x) / 2,
-                            y: (current.y + next.y) / 2,
-                            isDragging: false
-                        });
-                    }
-                    
-                    // Replace control points with new array
-                    controlPoints.splice(0, controlPoints.length, ...newPoints);
-                    containerPath = generatePathFromControlPoints();
-                }
-                
-                // 'H' key - Toggle control points visibility
-                if (e.key.toLowerCase() === 'h') {
-                    showControlPoints = !showControlPoints;
-                }
-                
-                // 'S' key - Switch curve types
-                if (e.key.toLowerCase() === 's') {
-                    const curveTypes = ['bezier', 'cardinal', 'catmull-rom'];
-                    const currentIndex = curveTypes.indexOf(pathConfig.curveType);
-                    const nextIndex = (currentIndex + 1) % curveTypes.length;
-                    pathConfig.curveType = curveTypes[nextIndex];
-                    containerPath = generatePathFromControlPoints();
-                    
-                    // Show temporary notification
-                    const notification = document.createElement('div');
-                    notification.style.position = 'absolute';
-                    notification.style.top = '50%';
-                    notification.style.left = '50%';
-                    notification.style.transform = 'translate(-50%, -50%)';
-                    notification.style.padding = '10px 20px';
-                    notification.style.backgroundColor = 'rgba(0, 0, 0, 0.7)';
-                    notification.style.color = 'white';
-                    notification.style.borderRadius = '5px';
-                    notification.style.fontFamily = 'Arial, sans-serif';
-                    notification.style.fontSize = '16px';
-                    notification.style.zIndex = '2000';
-                    notification.textContent = `Curve type: ${pathConfig.curveType}`;
-                    
-                    document.body.appendChild(notification);
-                    setTimeout(() => {
-                        notification.style.opacity = '0';
-                        notification.style.transition = 'opacity 0.5s';
-                        setTimeout(() => notification.remove(), 500);
-                    }, 1500);
+                // If animation was complete, we need to keep it complete after resize
+                if (animationConfig.complete) {
+                    // No need to restart animation, keep it in final state
+                } else {
+                    // Keep current progress for smoother transition during resize
                 }
             });
             
@@ -1072,13 +1101,10 @@
             instructions.style.maxWidth = '300px';
             
             instructions.innerHTML = `
-                <strong>Drag Controls:</strong><br>
-                • Drag points to change shape<br>
-                • Alt+Click to add point<br>
-                • Shift+Click to remove point<br>
-                • Click inside to disturb smoke<br>
-                • Press R to reset shape<br>
-                • Press C to refine shape
+                <strong>Smoke Container:</strong><br>
+                • Animating to Gaussian curve top<br>
+                • Final border at 1/3 from top<br>
+                • Click inside to disturb smoke
             `;
             
             document.getElementById('container').appendChild(instructions);
